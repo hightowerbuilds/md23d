@@ -1,5 +1,5 @@
 import { layoutWithLines, prepareWithSegments } from '@chenglou/pretext'
-import { createEffect, onCleanup, onMount } from 'solid-js'
+import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import * as THREE from 'three'
 
 import type {
@@ -12,6 +12,8 @@ const PANEL_PIXEL_WIDTH = 980
 const PANEL_WORLD_WIDTH = 4.6
 const PANEL_PADDING_X = 72
 const PANEL_PADDING_Y = 60
+const RUNNER_VIEW_OFFSET = 5.8
+const RUNNER_BASE_SCALE = 1.72
 
 type SceneCard = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
@@ -83,6 +85,27 @@ export default function MarkdownScene(props: {
   environment: BlogEnvironment | null
 }) {
   let host!: HTMLDivElement
+  const [activeTrainIndex, setActiveTrainIndex] = createSignal(0)
+  const moveTrainIndex = (direction: 1 | -1) => {
+    setActiveTrainIndex((index) => {
+      const total = props.documentModel.blocks.length
+      if (total <= 0) {
+        return 0
+      }
+
+      if (direction > 0) {
+        return index + 1 < total ? index + 1 : 0
+      }
+
+      return index > 0 ? index - 1 : total - 1
+    })
+  }
+
+  createEffect(() => {
+    props.documentModel
+    props.environment
+    setActiveTrainIndex(0)
+  })
 
   onMount(async () => {
     await document.fonts.ready
@@ -125,7 +148,6 @@ export default function MarkdownScene(props: {
     let frameId = 0
     let currentEnvironment = props.environment
     let reduceMotion = reducedMotionQuery?.matches ?? false
-    let trainStartTime = performance.now()
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0]
@@ -156,9 +178,44 @@ export default function MarkdownScene(props: {
     host.addEventListener('pointermove', handlePointerMove)
     host.addEventListener('pointerleave', resetPointer)
 
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (props.environment !== 'train') {
+        return
+      }
+
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return
+      }
+
+      const target = event.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target instanceof HTMLButtonElement
+      ) {
+        return
+      }
+
+      if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        moveTrainIndex(1)
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        moveTrainIndex(-1)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
       reduceMotion = event.matches
-      trainStartTime = performance.now()
     }
 
     reducedMotionQuery?.addEventListener?.('change', handleReducedMotionChange)
@@ -170,7 +227,6 @@ export default function MarkdownScene(props: {
 
       currentEnvironment = props.environment
       trackLength = 72
-      trainStartTime = performance.now()
       clearGroup(stage)
 
       const palette = palettes[currentEnvironment]
@@ -226,37 +282,42 @@ export default function MarkdownScene(props: {
             card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
         }
       } else {
-        const elapsed = Math.max(0, time - trainStartTime) * 0.001
-        const travelLimit = Math.max(trackLength - 28, 0)
-        const travel = Math.min(
-          elapsed * (reduceMotion ? 1.4 : 2.8),
-          travelLimit,
-        )
+        const activeCard =
+          cards[Math.min(activeTrainIndex(), Math.max(cards.length - 1, 0))] ?? null
+        const targetCameraZ = (activeCard?.basePosition.z ?? -12) + RUNNER_VIEW_OFFSET
+        const slideFocusZ = camera.position.z - RUNNER_VIEW_OFFSET
 
-        camera.position.x +=
-          (pointer.x * (reduceMotion ? 0.02 : 0.04) - camera.position.x) * 0.024
-        camera.position.y +=
-          (1.78 - pointer.y * (reduceMotion ? 0.02 : 0.04) - camera.position.y) * 0.05
-        camera.position.z += (7.8 - travel - camera.position.z) * 0.06
-        camera.lookAt(camera.position.x * 0.04, 1.64, camera.position.z - 11.1)
+        camera.position.x += (0 - camera.position.x) * 0.14
+        camera.position.y += (1.82 - camera.position.y) * 0.14
+        camera.position.z +=
+          (targetCameraZ - camera.position.z) * (reduceMotion ? 0.12 : 0.16)
+        camera.lookAt(0, 1.82, camera.position.z - (RUNNER_VIEW_OFFSET + 0.2))
         stage.rotation.y = 0
         stage.rotation.x = 0
-        starField.position.z = camera.position.z
-        starField.position.x = camera.position.x * 0.16
+        starField.position.z = 0
+        starField.position.x = 0
 
-        for (const [index, card] of cards.entries()) {
-          const distanceFromFocus = Math.abs(card.basePosition.z - (camera.position.z - 9.6))
-          const focus = THREE.MathUtils.clamp(1 - distanceFromFocus / 18, 0, 1)
-          const passthrough = THREE.MathUtils.clamp(1 - distanceFromFocus / 4.2, 0, 1)
+        for (const card of cards) {
+          const distanceFromFocus = Math.abs(card.basePosition.z - slideFocusZ)
+          const focus = THREE.MathUtils.clamp(1 - distanceFromFocus / 14, 0, 1)
+          const passthrough = THREE.MathUtils.clamp(
+            1 - Math.abs(card.basePosition.z - camera.position.z) / 1.5,
+            0,
+            1,
+          )
 
           card.mesh.position.x = card.basePosition.x
-          card.mesh.position.y = card.basePosition.y + focus * 0.05
+          card.mesh.position.y = card.basePosition.y + focus * 0.04
           card.mesh.rotation.y = card.baseRotation.y
-          card.mesh.rotation.x = card.baseRotation.x - focus * 0.008
+          card.mesh.rotation.x = card.baseRotation.x
           card.mesh.scale.setScalar(
-            card.baseScale.x * (1 + focus * (reduceMotion ? 0.035 : 0.06)),
+            card.baseScale.x * (1 + focus * (reduceMotion ? 0.025 : 0.04)),
           )
-          card.mesh.material.opacity = 0.2 + focus * 0.8 - passthrough * 0.55
+          card.mesh.material.opacity = THREE.MathUtils.clamp(
+            0.08 + focus * 0.92 - passthrough * 0.72,
+            0,
+            1,
+          )
         }
       }
 
@@ -277,6 +338,7 @@ export default function MarkdownScene(props: {
       resizeObserver.disconnect()
       host.removeEventListener('pointermove', handlePointerMove)
       host.removeEventListener('pointerleave', resetPointer)
+      window.removeEventListener('keydown', handleKeyDown)
       reducedMotionQuery?.removeEventListener?.('change', handleReducedMotionChange)
       clearGroup(stage)
       disposeRenderable(starField)
@@ -288,6 +350,27 @@ export default function MarkdownScene(props: {
   return (
     <div class="scene-shell">
       <div ref={host} class="scene-canvas" />
+      <Show when={props.environment === 'train' && props.documentModel.blocks.length > 0}>
+        <div class="scene-controls">
+          <button
+            type="button"
+            class="scene-next"
+            onClick={() => moveTrainIndex(1)}
+          >
+            {activeTrainIndex() + 1 < props.documentModel.blocks.length ? 'Next' : 'Restart'}
+          </button>
+
+          <div class="scene-progress" aria-live="polite">
+            <span class="scene-progress-current">
+              {formatSlideNumber(activeTrainIndex() + 1)}
+            </span>
+            <span class="scene-progress-divider">/</span>
+            <span class="scene-progress-total">
+              {formatSlideNumber(props.documentModel.blocks.length)}
+            </span>
+          </div>
+        </div>
+      </Show>
     </div>
   )
 }
@@ -315,11 +398,13 @@ function createContentCard(
   gradient.addColorStop(1, palette.panelSoft)
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  ctx.fillStyle = gradient
-  ctx.fillRect(8, 8, canvas.width - 16, canvas.height - 16)
-  ctx.lineWidth = 2
-  ctx.strokeStyle = palette.border
-  ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16)
+  if (environment === 'space') {
+    ctx.fillStyle = gradient
+    ctx.fillRect(8, 8, canvas.width - 16, canvas.height - 16)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = palette.border
+    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16)
+  }
 
   ctx.save()
   ctx.beginPath()
@@ -526,7 +611,7 @@ function arrangeTrain(
     const z = cursorZ
     const x = 0
     const y = 1.78 + (lane === 0 ? 0.18 : lane === 1 ? 0.04 : lane === 2 ? 0.12 : -0.02)
-    const scale = getRunnerCardScale(kind)
+    const scale = getRunnerCardScale(kind) * RUNNER_BASE_SCALE
 
     card.mesh.position.set(x, y, z)
     card.mesh.rotation.set(0.003, 0, 0)
@@ -602,16 +687,20 @@ function getRunnerCardScale(kind: BlogBlock['kind']) {
 function getRunnerCardSpacing(kind: BlogBlock['kind']) {
   switch (kind) {
     case 'heading':
-      return 14
+      return 16.8
     case 'quote':
-      return 12.4
+      return 15
     case 'code':
     case 'diagram':
     case 'table':
-      return 12
+      return 14.4
     default:
-      return 10.9
+      return 13.6
   }
+}
+
+function formatSlideNumber(value: number) {
+  return value.toString().padStart(2, '0')
 }
 
 function createStarField(color: string) {

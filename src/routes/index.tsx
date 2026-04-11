@@ -5,7 +5,6 @@ import {
   Show,
   Suspense,
   Switch,
-  createMemo,
   createSignal,
   lazy,
   onMount,
@@ -21,7 +20,6 @@ import {
   type StoredMarkdownDraft,
 } from '../lib/blog/localDraftStorage'
 import { parseMarkdownDocument } from '../lib/blog/parseMarkdown'
-import { sampleMarkdown } from '../lib/blog/sampleMarkdown'
 import type { BlogDocument, BlogEnvironment } from '../lib/blog/types'
 
 export const Route = createFileRoute('/')({ component: App })
@@ -36,7 +34,6 @@ function App() {
   const [environment, setEnvironment] = createSignal<BlogEnvironment | null>(null)
   const [storedDrafts, setStoredDrafts] = createSignal<StoredMarkdownDraft[]>([])
   const [currentDraftId, setCurrentDraftId] = createSignal<string | null>(null)
-  const [markdown, setMarkdown] = createSignal('')
   const [documentModel, setDocumentModel] = createSignal<BlogDocument | null>(null)
   const [sourceName, setSourceName] = createSignal('')
   const [loadError, setLoadError] = createSignal('')
@@ -44,17 +41,6 @@ function App() {
     'idle' | 'reading' | 'processing' | 'ready'
   >('idle')
   const [uploadProgress, setUploadProgress] = createSignal(0)
-
-  const currentDraft = createMemo(
-    () => storedDrafts().find((draft) => draft.id === currentDraftId()) ?? null,
-  )
-  const composerStats = createMemo(() => {
-    const source = markdown().trim()
-    return source ? parseMarkdownDocument(source).stats : null
-  })
-  const draftNamePreview = createMemo(() =>
-    deriveDraftName(markdown(), currentDraft()?.name ?? sourceName()),
-  )
 
   onMount(async () => {
     try {
@@ -81,12 +67,11 @@ function App() {
     text: string
     preferredName: string
     size?: number
-    draftId?: string | null
     nextStage?: AppStage
   }) => {
     const text = input.text.trim()
     if (!text) {
-      throw new Error('Enter markdown or upload a file first.')
+      throw new Error('Unable to read that markdown file.')
     }
 
     const size = input.size ?? getTextSize(input.text)
@@ -99,13 +84,9 @@ function App() {
       throw new Error('Session storage is unavailable.')
     }
 
-    const replacedSize =
-      input.draftId != null
-        ? storedDrafts().find((draft) => draft.id === input.draftId)?.size ?? 0
-        : 0
-    const nextTotalSize = getStoredDraftsSize(storedDrafts()) - replacedSize + size
+    const nextTotalSize = getStoredDraftsSize(storedDrafts()) + size
     if (nextTotalSize > MAX_MARKDOWN_CACHE_BYTES) {
-      throw new Error('Saving this draft would exceed the 5 MB session cache.')
+      throw new Error('Saving this file would exceed the 5 MB session cache.')
     }
 
     setSessionId(activeSessionId)
@@ -117,8 +98,7 @@ function App() {
 
     const parsed = parseMarkdownDocument(input.text)
     const savedDraft = await saveStoredMarkdownDraft(activeSessionId, {
-      id: input.draftId ?? undefined,
-      name: deriveDraftName(input.text, input.preferredName || parsed.title),
+      name: input.preferredName || parsed.title,
       text: input.text,
       size,
       savedAt: new Date().toISOString(),
@@ -128,9 +108,8 @@ function App() {
     setUploadProgress(0.88)
 
     startTransition(() => {
-      setStoredDrafts((drafts) => upsertDraft(drafts, savedDraft))
+      setStoredDrafts((drafts) => [...drafts, savedDraft])
       setCurrentDraftId(savedDraft.id)
-      setMarkdown(input.text)
       setDocumentModel(parsed)
       setSourceName(savedDraft.name)
       setUploadProgress(1)
@@ -144,9 +123,9 @@ function App() {
       return
     }
 
-    const previousMarkdown = markdown()
     const previousDocumentModel = documentModel()
     const previousSourceName = sourceName()
+    const previousDraftId = currentDraftId()
 
     try {
       setLoadError('')
@@ -155,7 +134,6 @@ function App() {
       setUploadState('reading')
       setUploadProgress(0)
       setSourceName(file.name)
-      setMarkdown('')
       setDocumentModel(null)
 
       const text = await readFileWithProgress(file, (progress) => {
@@ -168,9 +146,9 @@ function App() {
         size: file.size,
       })
     } catch (error) {
-      setMarkdown(previousMarkdown)
       setDocumentModel(previousDocumentModel)
       setSourceName(previousSourceName)
+      setCurrentDraftId(previousDraftId)
       setStage('home')
       setUploadProgress(0)
       setUploadState('idle')
@@ -178,32 +156,6 @@ function App() {
         error instanceof Error ? error.message : 'Unable to read that markdown file.',
       )
     }
-  }
-
-  const handleComposerLaunch = async () => {
-    try {
-      await stageMarkdown({
-        text: markdown(),
-        preferredName: draftNamePreview(),
-        draftId: currentDraftId(),
-      })
-    } catch (error) {
-      setUploadProgress(0)
-      setUploadState('idle')
-      setLoadError(
-        error instanceof Error ? error.message : 'Unable to stage that markdown draft.',
-      )
-    }
-  }
-
-  const handleUseSample = () => {
-    setLoadError('')
-    setCurrentDraftId(null)
-    setSourceName('sample-orbit-log.md')
-    setMarkdown(sampleMarkdown)
-    setDocumentModel(null)
-    setUploadState('idle')
-    setStage('home')
   }
 
   const returnHome = () => {
@@ -227,7 +179,6 @@ function App() {
     const parsed = parseMarkdownDocument(draft.text)
 
     startTransition(() => {
-      setMarkdown(draft.text)
       setDocumentModel(parsed)
       setSourceName(draft.name)
       setUploadProgress(1)
@@ -266,7 +217,7 @@ function App() {
                     style={{ width: `${Math.max(4, Math.round(uploadProgress() * 100))}%` }}
                   />
                   <div class="progress-copy">
-                    <span class="progress-name">{sourceName() || draftNamePreview()}</span>
+                    <span class="progress-name">{sourceName()}</span>
                     <span class="progress-phase">Processing</span>
                     <span class="progress-percent">
                       {Math.round(uploadProgress() * 100)}%
@@ -306,72 +257,16 @@ function App() {
               </Match>
 
               <Match when={true}>
-                <div class="composer-shell">
-                  <div class="composer-header">
-                    <p class="eyebrow">Authoring</p>
-                    <h1>Write the scene in markdown.</h1>
-                    <p class="composer-copy">
-                      Compose directly in the browser or upload a <code>.md</code> file, then
-                      send the same document through the 3D pipeline.
-                    </p>
-                  </div>
-
-                  <div class="composer-actions">
-                    <button
-                      type="button"
-                      class="environment-button"
-                      onClick={handleUseSample}
-                    >
-                      Use Sample
-                    </button>
-                    <button
-                      type="button"
-                      class="environment-button"
-                      disabled={!markdown().trim()}
-                      onClick={() => void handleComposerLaunch()}
-                    >
-                      Stage Draft
-                    </button>
-                    <label class="upload-button upload-button-muted">
-                      Upload MD
-                      <input
-                        type="file"
-                        accept=".md,.markdown,text/markdown,text/plain"
-                        onChange={(event) =>
-                          void handleFileSelection(event.currentTarget.files?.[0])
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <Show when={composerStats()}>
-                    <div class="composer-meta">
-                      <span>{draftNamePreview()}</span>
-                      <span>{composerStats()!.wordCount} words</span>
-                      <span>{composerStats()!.sectionCount} cards</span>
-                      <span>{composerStats()!.readingMinutes} min read</span>
-                    </div>
-                  </Show>
-
-                  <textarea
-                    class="markdown-editor"
-                    value={markdown()}
-                    onInput={(event) => {
-                      setLoadError('')
-                      setMarkdown(event.currentTarget.value)
-                      setUploadState('idle')
-                      setStage('home')
-                    }}
-                    placeholder={`# Untitled Flight
-
-Write a heading, a few paragraphs, and maybe a code block.
-
-\`\`\`ts
-const world = buildScene(documentModel, 'space')
-\`\`\``}
-                    spellcheck={false}
+                <label class="upload-button upload-button-landing">
+                  Upload MD
+                  <input
+                    type="file"
+                    accept=".md,.markdown,text/markdown,text/plain"
+                    onChange={(event) =>
+                      void handleFileSelection(event.currentTarget.files?.[0])
+                    }
                   />
-                </div>
+                </label>
               </Match>
             </Switch>
 
@@ -427,7 +322,7 @@ const world = buildScene(documentModel, 'space')
                 type="button"
                 classList={{
                   'draft-chip': true,
-                  'is-active': currentDraft()?.id === draft.id,
+                  'is-active': currentDraftId() === draft.id,
                 }}
                 onClick={() => void handleDraftSelection(draft)}
               >
@@ -497,32 +392,6 @@ function waitForFrame() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => resolve())
   })
-}
-
-function upsertDraft(
-  drafts: StoredMarkdownDraft[],
-  savedDraft: StoredMarkdownDraft,
-) {
-  const nextDrafts = drafts.some((draft) => draft.id === savedDraft.id)
-    ? drafts.map((draft) => (draft.id === savedDraft.id ? savedDraft : draft))
-    : [...drafts, savedDraft]
-
-  return [...nextDrafts].sort((left, right) => left.savedAt.localeCompare(right.savedAt))
-}
-
-function deriveDraftName(markdown: string, fallbackName?: string) {
-  const headingMatch = markdown.match(/^\s*#\s+(.+)$/m)
-  const baseName =
-    headingMatch?.[1]?.trim() ||
-    stripMarkdownExtension(fallbackName?.trim() || '') ||
-    'Untitled Flight'
-
-  const sanitized = baseName.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
-  return `${sanitized || 'Untitled Flight'}.md`
-}
-
-function stripMarkdownExtension(value: string) {
-  return value.replace(/\.(md|markdown)$/i, '')
 }
 
 function getTextSize(text: string) {

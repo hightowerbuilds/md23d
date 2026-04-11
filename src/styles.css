@@ -68,7 +68,6 @@ code {
   padding: 1.5rem 1.5rem 5rem;
 }
 
-.composer-shell,
 .mode-shell {
   width: min(68rem, calc(100vw - 3rem));
   border: 1px solid var(--line);
@@ -77,15 +76,10 @@ code {
     var(--bg-elevated);
 }
 
-.composer-shell {
-  padding: 1.4rem;
-}
-
 .mode-shell {
   padding: 2rem;
 }
 
-.composer-header h1,
 .mode-shell h1 {
   margin: 0;
   font-size: clamp(2rem, 5vw, 3.6rem);
@@ -95,55 +89,11 @@ code {
   max-width: 10ch;
 }
 
-.composer-copy,
 .mode-copy {
   max-width: 40rem;
   margin: 0.9rem 0 0;
   color: var(--text-soft);
   line-height: 1.6;
-}
-
-.composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 1.2rem;
-  margin-top: 1.5rem;
-}
-
-.composer-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  margin-top: 1rem;
-  color: var(--text-dim);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.markdown-editor {
-  width: 100%;
-  min-height: 25rem;
-  margin-top: 1.4rem;
-  border: 1px solid var(--line);
-  background: #060606;
-  color: var(--text);
-  padding: 1.1rem 1rem 1.2rem;
-  resize: vertical;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.95rem;
-  line-height: 1.65;
-  caret-color: var(--text);
-}
-
-.markdown-editor::placeholder {
-  color: var(--text-dim);
-}
-
-.markdown-editor:focus {
-  outline: none;
-  border-color: var(--line-strong);
 }
 
 .upload-button {
@@ -176,10 +126,6 @@ code {
 
 .upload-button-landing {
   min-width: auto;
-}
-
-.upload-button-muted {
-  color: var(--text-soft);
 }
 
 .landing-actions {
@@ -293,6 +239,7 @@ code {
 
 .scene-shell {
   min-height: calc(100vh - 4.5rem);
+  position: relative;
 }
 
 .scene-canvas {
@@ -304,6 +251,55 @@ code {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.scene-controls {
+  position: absolute;
+  left: 50%;
+  bottom: 1.15rem;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  transform: translateX(-50%);
+}
+
+.scene-next {
+  min-height: auto;
+  padding: 0 0 0.42rem;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text-soft);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.scene-next:hover {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.scene-progress {
+  display: flex;
+  align-items: baseline;
+  gap: 0.34rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.scene-progress-current {
+  color: var(--text-soft);
+}
+
+.scene-progress-total {
+  color: #ffc78b;
+  text-shadow: 0 0 18px rgba(255, 176, 100, 0.4);
 }
 
 .scene-loading {
@@ -320,8 +316,9 @@ code {
 .draft-strip {
   position: fixed;
   left: 1rem;
-  right: 1rem;
+  right: auto;
   bottom: 1rem;
+  max-width: calc(100vw - 2rem);
   z-index: 25;
   display: flex;
   align-items: center;
@@ -393,26 +390,28 @@ code {
     top: 0.9rem;
   }
 
-  .composer-shell,
   .mode-shell {
     width: min(100%, calc(100vw - 2rem));
   }
 
-  .composer-shell,
   .mode-shell,
   .about-panel {
     padding: 1.2rem;
   }
 
   .landing-actions,
-  .environment-switch,
-  .composer-actions {
+  .environment-switch {
     flex-wrap: wrap;
     gap: 1.2rem;
   }
 
   .progress-shell {
     width: min(20rem, calc(100vw - 2rem));
+  }
+
+  .scene-controls {
+    bottom: 0.9rem;
+    gap: 0.72rem;
   }
 
   .inline-error-top {
@@ -422,13 +421,9 @@ code {
 
   .draft-strip {
     left: 0.9rem;
-    right: 0.9rem;
+    right: auto;
     bottom: 0.9rem;
+    max-width: calc(100vw - 1.8rem);
     gap: 1rem;
-  }
-
-  .markdown-editor {
-    min-height: 20rem;
-    font-size: 0.9rem;
   }
 }
