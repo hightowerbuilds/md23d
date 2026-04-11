@@ -190,7 +190,7 @@ export default function MarkdownScene(props: {
         arrangeSpace(cards, stage)
         stage.add(createNebulaRing(palette))
       } else {
-        trackLength = arrangeTrain(cards, stage, palette)
+        trackLength = arrangeTrain(cards, stage)
         stage.add(createRailWorld(trackLength, palette))
       }
     }
@@ -234,29 +234,29 @@ export default function MarkdownScene(props: {
         )
 
         camera.position.x +=
-          (pointer.x * (reduceMotion ? 0.1 : 0.16) - camera.position.x) * 0.024
+          (pointer.x * (reduceMotion ? 0.02 : 0.04) - camera.position.x) * 0.024
         camera.position.y +=
-          (1.72 - pointer.y * (reduceMotion ? 0.04 : 0.08) - camera.position.y) * 0.05
+          (1.78 - pointer.y * (reduceMotion ? 0.02 : 0.04) - camera.position.y) * 0.05
         camera.position.z += (7.8 - travel - camera.position.z) * 0.06
-        camera.lookAt(camera.position.x * 0.08, 1.26, camera.position.z - 12.4)
+        camera.lookAt(camera.position.x * 0.04, 1.64, camera.position.z - 11.1)
         stage.rotation.y = 0
         stage.rotation.x = 0
         starField.position.z = camera.position.z
         starField.position.x = camera.position.x * 0.16
 
         for (const [index, card] of cards.entries()) {
-          const side = Math.sign(card.basePosition.x) || 1
-          const distanceFromFocus = Math.abs(card.basePosition.z - (camera.position.z - 12))
+          const distanceFromFocus = Math.abs(card.basePosition.z - (camera.position.z - 9.6))
           const focus = THREE.MathUtils.clamp(1 - distanceFromFocus / 18, 0, 1)
+          const passthrough = THREE.MathUtils.clamp(1 - distanceFromFocus / 4.2, 0, 1)
 
-          card.mesh.position.x = card.basePosition.x + side * focus * 0.08
-          card.mesh.position.y = card.basePosition.y + focus * 0.06
-          card.mesh.rotation.y = card.baseRotation.y - side * focus * 0.04
-          card.mesh.rotation.x = card.baseRotation.x - focus * 0.01
+          card.mesh.position.x = card.basePosition.x
+          card.mesh.position.y = card.basePosition.y + focus * 0.05
+          card.mesh.rotation.y = card.baseRotation.y
+          card.mesh.rotation.x = card.baseRotation.x - focus * 0.008
           card.mesh.scale.setScalar(
-            card.baseScale.x * (1 + focus * (reduceMotion ? 0.025 : 0.045)),
+            card.baseScale.x * (1 + focus * (reduceMotion ? 0.035 : 0.06)),
           )
-          card.mesh.material.opacity = 0.42 + focus * 0.58
+          card.mesh.material.opacity = 0.2 + focus * 0.8 - passthrough * 0.55
         }
       }
 
@@ -384,6 +384,7 @@ function createContentCard(
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
+    side: environment === 'train' ? THREE.DoubleSide : THREE.FrontSide,
   })
 
   const aspect = canvas.height / canvas.width
@@ -517,19 +518,18 @@ function arrangeTrain(
   cards: SceneCard[],
   stage: THREE.Group,
 ) {
-  let cursorZ = -18
+  let cursorZ = -12
 
   for (const [index, card] of cards.entries()) {
     const kind = card.mesh.userData.kind as BlogBlock['kind']
-    const side = index % 2 === 0 ? 1 : -1
     const lane = index % 4
     const z = cursorZ
-    const x = side * (4.15 + (lane % 2) * 0.24)
-    const y = 1.72 + (lane === 0 ? 0.22 : lane === 1 ? 0.06 : lane === 2 ? 0.16 : 0)
+    const x = 0
+    const y = 1.78 + (lane === 0 ? 0.18 : lane === 1 ? 0.04 : lane === 2 ? 0.12 : -0.02)
     const scale = getRunnerCardScale(kind)
 
     card.mesh.position.set(x, y, z)
-    card.mesh.rotation.set(0.006, side > 0 ? -0.56 : 0.56, 0)
+    card.mesh.rotation.set(0.003, 0, 0)
     card.mesh.scale.setScalar(scale)
     card.basePosition.copy(card.mesh.position)
     card.baseRotation.copy(card.mesh.rotation)
