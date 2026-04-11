@@ -14,9 +14,10 @@ const PANEL_PADDING_X = 72
 const PANEL_PADDING_Y = 60
 
 type SceneCard = {
-  mesh: THREE.Mesh
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   basePosition: THREE.Vector3
   baseRotation: THREE.Euler
+  baseScale: THREE.Vector3
 }
 
 type EnvironmentPalette = {
@@ -58,12 +59,12 @@ const palettes: Record<BlogEnvironment, EnvironmentPalette> = {
     floor: '#08111d',
   },
   train: {
-    sceneBackground: '#130b08',
-    fog: '#1b100c',
-    star: '#ffd4a4',
+    sceneBackground: '#02050d',
+    fog: '#060a13',
+    star: '#ffd8ae',
     rim: '#ff8b4a',
-    panel: 'rgba(30, 16, 11, 0.94)',
-    panelSoft: 'rgba(63, 28, 17, 0.72)',
+    panel: 'rgba(24, 13, 14, 0.94)',
+    panelSoft: 'rgba(46, 23, 25, 0.72)',
     border: 'rgba(255, 147, 84, 0.42)',
     text: '#fff3e9',
     textSoft: '#d7b7a0',
@@ -101,6 +102,10 @@ export default function MarkdownScene(props: {
     const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 220)
     const stage = new THREE.Group()
     const starField = createStarField(getPalette(props.environment).star)
+    const reducedMotionQuery =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null
 
     scene.add(stage)
     scene.add(starField)
@@ -119,6 +124,8 @@ export default function MarkdownScene(props: {
     let trackLength = 72
     let frameId = 0
     let currentEnvironment = props.environment
+    let reduceMotion = reducedMotionQuery?.matches ?? false
+    let trainStartTime = performance.now()
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0]
@@ -149,6 +156,13 @@ export default function MarkdownScene(props: {
     host.addEventListener('pointermove', handlePointerMove)
     host.addEventListener('pointerleave', resetPointer)
 
+    const handleReducedMotionChange = (event: MediaQueryListEvent) => {
+      reduceMotion = event.matches
+      trainStartTime = performance.now()
+    }
+
+    reducedMotionQuery?.addEventListener?.('change', handleReducedMotionChange)
+
     const rebuildScene = () => {
       if (!isBlogEnvironment(props.environment)) {
         return
@@ -156,12 +170,15 @@ export default function MarkdownScene(props: {
 
       currentEnvironment = props.environment
       trackLength = 72
+      trainStartTime = performance.now()
       clearGroup(stage)
 
       const palette = palettes[currentEnvironment]
       scene.background = new THREE.Color(palette.sceneBackground)
       scene.fog = new THREE.Fog(palette.fog, 14, currentEnvironment === 'space' ? 72 : 84)
       ;(starField.material as THREE.PointsMaterial).color.set(palette.star)
+      starField.position.set(0, 0, 0)
+      starField.visible = true
       fillLight.color.set(palette.accent)
       fillLight.intensity = currentEnvironment === 'space' ? 20 : 13
 
@@ -182,8 +199,13 @@ export default function MarkdownScene(props: {
       frameId = requestAnimationFrame(animate)
 
       const seconds = time * 0.001
-      starField.rotation.y += currentEnvironment === 'space' ? 0.00025 : 0.00008
-      starField.rotation.x = Math.sin(seconds * 0.08) * 0.05
+      if (currentEnvironment === 'space') {
+        starField.rotation.y += 0.00025
+        starField.rotation.x = Math.sin(seconds * 0.08) * 0.05
+      } else {
+        starField.rotation.y = 0
+        starField.rotation.x = 0
+      }
 
       if (currentEnvironment === 'space') {
         camera.position.x += (pointer.x * 1.9 - camera.position.x) * 0.032
@@ -204,20 +226,37 @@ export default function MarkdownScene(props: {
             card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
         }
       } else {
-        const travel = (seconds * 6.4) % trackLength
-        camera.position.x += (pointer.x * 0.45 - camera.position.x) * 0.03
-        camera.position.y += (1.8 - pointer.y * 0.14 - camera.position.y) * 0.05
-        camera.position.z = 8 - travel
-        camera.lookAt(camera.position.x * 0.2, 1.35, camera.position.z - 13)
+        const elapsed = Math.max(0, time - trainStartTime) * 0.001
+        const travelLimit = Math.max(trackLength - 28, 0)
+        const travel = Math.min(
+          elapsed * (reduceMotion ? 1.4 : 2.8),
+          travelLimit,
+        )
+
+        camera.position.x +=
+          (pointer.x * (reduceMotion ? 0.1 : 0.16) - camera.position.x) * 0.024
+        camera.position.y +=
+          (1.72 - pointer.y * (reduceMotion ? 0.04 : 0.08) - camera.position.y) * 0.05
+        camera.position.z += (7.8 - travel - camera.position.z) * 0.06
+        camera.lookAt(camera.position.x * 0.08, 1.26, camera.position.z - 12.4)
         stage.rotation.y = 0
         stage.rotation.x = 0
+        starField.position.z = camera.position.z
+        starField.position.x = camera.position.x * 0.16
 
         for (const [index, card] of cards.entries()) {
-          card.mesh.position.y =
-            card.basePosition.y + Math.sin(seconds * 1.1 + index * 0.45) * 0.06
-          card.mesh.rotation.y = card.baseRotation.y
-          card.mesh.rotation.x =
-            card.baseRotation.x + Math.sin(seconds * 0.5 + index) * 0.01
+          const side = Math.sign(card.basePosition.x) || 1
+          const distanceFromFocus = Math.abs(card.basePosition.z - (camera.position.z - 12))
+          const focus = THREE.MathUtils.clamp(1 - distanceFromFocus / 18, 0, 1)
+
+          card.mesh.position.x = card.basePosition.x + side * focus * 0.08
+          card.mesh.position.y = card.basePosition.y + focus * 0.06
+          card.mesh.rotation.y = card.baseRotation.y - side * focus * 0.04
+          card.mesh.rotation.x = card.baseRotation.x - focus * 0.01
+          card.mesh.scale.setScalar(
+            card.baseScale.x * (1 + focus * (reduceMotion ? 0.025 : 0.045)),
+          )
+          card.mesh.material.opacity = 0.42 + focus * 0.58
         }
       }
 
@@ -238,6 +277,7 @@ export default function MarkdownScene(props: {
       resizeObserver.disconnect()
       host.removeEventListener('pointermove', handlePointerMove)
       host.removeEventListener('pointerleave', resetPointer)
+      reducedMotionQuery?.removeEventListener?.('change', handleReducedMotionChange)
       clearGroup(stage)
       disposeRenderable(starField)
       renderer.dispose()
@@ -355,6 +395,7 @@ function createContentCard(
     mesh,
     basePosition: new THREE.Vector3(),
     baseRotation: new THREE.Euler(),
+    baseScale: new THREE.Vector3(1, 1, 1),
   }
 }
 
@@ -475,46 +516,35 @@ function arrangeSpace(cards: SceneCard[], stage: THREE.Group) {
 function arrangeTrain(
   cards: SceneCard[],
   stage: THREE.Group,
-  palette: EnvironmentPalette,
 ) {
-  const postMaterial = new THREE.MeshStandardMaterial({
-    color: palette.rail,
-    emissive: palette.railGlow,
-    emissiveIntensity: 0.16,
-    metalness: 0.62,
-    roughness: 0.44,
-  })
-
-  const beamGeometry = new THREE.BoxGeometry(0.12, 3.6, 0.12)
-  const braceGeometry = new THREE.BoxGeometry(1.8, 0.08, 0.08)
+  let cursorZ = -18
 
   for (const [index, card] of cards.entries()) {
+    const kind = card.mesh.userData.kind as BlogBlock['kind']
     const side = index % 2 === 0 ? 1 : -1
-    const z = -16 - index * 11.5
-    const x = side * 4.8
-    const y = 2.25 + (index % 3) * 0.16
+    const lane = index % 4
+    const z = cursorZ
+    const x = side * (4.15 + (lane % 2) * 0.24)
+    const y = 1.72 + (lane === 0 ? 0.22 : lane === 1 ? 0.06 : lane === 2 ? 0.16 : 0)
+    const scale = getRunnerCardScale(kind)
 
     card.mesh.position.set(x, y, z)
-    card.mesh.rotation.set(0.01, side > 0 ? -0.72 : 0.72, 0)
+    card.mesh.rotation.set(0.006, side > 0 ? -0.56 : 0.56, 0)
+    card.mesh.scale.setScalar(scale)
     card.basePosition.copy(card.mesh.position)
     card.baseRotation.copy(card.mesh.rotation)
+    card.baseScale.copy(card.mesh.scale)
     stage.add(card.mesh)
 
-    const post = new THREE.Mesh(beamGeometry, postMaterial)
-    post.position.set(x * 0.78, 0.95, z)
-    stage.add(post)
-
-    const brace = new THREE.Mesh(braceGeometry, postMaterial)
-    brace.position.set(x * 0.88, 2.62, z)
-    brace.rotation.z = side > 0 ? 0.2 : -0.2
-    stage.add(brace)
+    cursorZ -= getRunnerCardSpacing(kind)
   }
 
-  return cards.length * 11.5 + 42
+  return Math.abs(cursorZ) + 38
 }
 
 function createRailWorld(trackLength: number, palette: EnvironmentPalette) {
   const world = new THREE.Group()
+  const centerZ = -(trackLength - 16) / 2
   const railMaterial = new THREE.MeshStandardMaterial({
     color: palette.rail,
     emissive: palette.railGlow,
@@ -522,54 +552,66 @@ function createRailWorld(trackLength: number, palette: EnvironmentPalette) {
     metalness: 0.78,
     roughness: 0.34,
   })
-  const floorMaterial = new THREE.MeshStandardMaterial({
-    color: palette.floor,
-    roughness: 0.95,
-    metalness: 0.08,
-  })
-  const sleeperMaterial = new THREE.MeshStandardMaterial({
-    color: '#24130d',
-    roughness: 0.96,
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: palette.railGlow,
+    transparent: true,
+    opacity: 0.34,
   })
 
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, trackLength + 60), floorMaterial)
-  ground.rotation.x = -Math.PI / 2
-  ground.position.set(0, -0.08, -(trackLength - 16) / 2)
-  world.add(ground)
-
-  const railGeometry = new THREE.BoxGeometry(0.12, 0.12, trackLength + 18)
+  const railGeometry = new THREE.BoxGeometry(0.13, 0.13, trackLength + 18)
   const leftRail = new THREE.Mesh(railGeometry, railMaterial)
-  leftRail.position.set(-0.82, 0.05, -(trackLength - 16) / 2)
+  leftRail.position.set(-0.82, 0.02, centerZ)
   world.add(leftRail)
 
   const rightRail = new THREE.Mesh(railGeometry, railMaterial)
-  rightRail.position.set(0.82, 0.05, -(trackLength - 16) / 2)
+  rightRail.position.set(0.82, 0.02, centerZ)
   world.add(rightRail)
 
-  const sleeperGeometry = new THREE.BoxGeometry(2.3, 0.08, 0.4)
-  const sleeperCount = Math.ceil(trackLength / 2.2)
-  for (let index = 0; index < sleeperCount; index += 1) {
-    const sleeper = new THREE.Mesh(sleeperGeometry, sleeperMaterial)
-    sleeper.position.set(0, 0, -index * 2.2 - 8)
-    world.add(sleeper)
-  }
+  const leftRailGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.05, trackLength + 18),
+    glowMaterial,
+  )
+  leftRailGlow.position.set(-0.82, 0.16, centerZ)
+  world.add(leftRailGlow)
 
-  const frameGeometry = new THREE.TorusGeometry(5.2, 0.05, 12, 44, Math.PI)
-  const frameMaterial = new THREE.MeshBasicMaterial({
-    color: palette.railGlow,
-    transparent: true,
-    opacity: 0.18,
-  })
-
-  const frameCount = Math.ceil(trackLength / 14)
-  for (let index = 0; index < frameCount; index += 1) {
-    const frame = new THREE.Mesh(frameGeometry, frameMaterial)
-    frame.rotation.y = Math.PI
-    frame.position.set(0, 0.25, -index * 14 - 8)
-    world.add(frame)
-  }
+  const rightRailGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.05, trackLength + 18),
+    glowMaterial,
+  )
+  rightRailGlow.position.set(0.82, 0.16, centerZ)
+  world.add(rightRailGlow)
 
   return world
+}
+
+function getRunnerCardScale(kind: BlogBlock['kind']) {
+  switch (kind) {
+    case 'heading':
+      return 1.16
+    case 'quote':
+      return 1.08
+    case 'code':
+    case 'diagram':
+    case 'table':
+      return 0.92
+    default:
+      return 1
+  }
+}
+
+function getRunnerCardSpacing(kind: BlogBlock['kind']) {
+  switch (kind) {
+    case 'heading':
+      return 14
+    case 'quote':
+      return 12.4
+    case 'code':
+    case 'diagram':
+    case 'table':
+      return 12
+    default:
+      return 10.9
+  }
 }
 
 function createStarField(color: string) {

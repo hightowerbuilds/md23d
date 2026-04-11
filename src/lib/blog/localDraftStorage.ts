@@ -14,6 +14,14 @@ export interface StoredMarkdownDraft {
   savedAt: string
 }
 
+export interface StoredMarkdownDraftInput {
+  id?: string
+  name: string
+  text: string
+  size: number
+  savedAt: string
+}
+
 export async function initializeDraftSession() {
   if (!canUseIndexedDb() || !canUseSessionStorage()) {
     return null
@@ -62,7 +70,7 @@ export async function listStoredMarkdownDrafts(sessionId: string) {
 
 export async function saveStoredMarkdownDraft(
   sessionId: string,
-  draft: Omit<StoredMarkdownDraft, 'id' | 'sessionId'>,
+  draft: StoredMarkdownDraftInput,
 ) {
   if (!canUseIndexedDb()) {
     throw new Error('IndexedDB is not available in this browser.')
@@ -70,7 +78,7 @@ export async function saveStoredMarkdownDraft(
 
   const storedDraft: StoredMarkdownDraft = {
     ...draft,
-    id: createSessionId(),
+    id: draft.id ?? createSessionId(),
     sessionId,
   }
 
