@@ -19,7 +19,7 @@ import {
   saveStoredMarkdownDraft,
   type StoredMarkdownDraft,
 } from '../lib/blog/localDraftStorage'
-import { parseMarkdownDocument } from '../lib/blog/parseMarkdown'
+import { parseUploadedDocument } from '../lib/blog/parseUploadedDocument'
 import type { BlogDocument, BlogEnvironment } from '../lib/blog/types'
 
 export const Route = createFileRoute('/')({ component: App })
@@ -96,7 +96,7 @@ function App() {
     setUploadState('processing')
     setUploadProgress(0.45)
 
-    const parsed = parseMarkdownDocument(input.text)
+    const parsed = parseUploadedDocument(input.text, input.preferredName)
     const savedDraft = await saveStoredMarkdownDraft(activeSessionId, {
       name: input.preferredName || parsed.title,
       text: input.text,
@@ -176,7 +176,7 @@ function App() {
     setCurrentDraftId(draft.id)
     setSourceName(draft.name)
     await waitForFrame()
-    const parsed = parseMarkdownDocument(draft.text)
+    const parsed = parseUploadedDocument(draft.text, draft.name)
 
     startTransition(() => {
       setDocumentModel(parsed)
@@ -257,16 +257,29 @@ function App() {
               </Match>
 
               <Match when={true}>
-                <label class="upload-button upload-button-landing">
-                  Upload MD
-                  <input
-                    type="file"
-                    accept=".md,.markdown,text/markdown,text/plain"
-                    onChange={(event) =>
-                      void handleFileSelection(event.currentTarget.files?.[0])
-                    }
-                  />
-                </label>
+                <div class="landing-actions">
+                  <label class="upload-button upload-button-landing">
+                    Upload MD
+                    <input
+                      type="file"
+                      accept=".md,.markdown,text/markdown,text/plain"
+                      onChange={(event) =>
+                        void handleFileSelection(event.currentTarget.files?.[0])
+                      }
+                    />
+                  </label>
+
+                  <label class="upload-button upload-button-landing">
+                    Upload HTML
+                    <input
+                      type="file"
+                      accept=".html,.htm,text/html,application/xhtml+xml"
+                      onChange={(event) =>
+                        void handleFileSelection(event.currentTarget.files?.[0])
+                      }
+                    />
+                  </label>
+                </div>
               </Match>
             </Switch>
 

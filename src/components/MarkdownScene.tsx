@@ -1,3 +1,4 @@
+import { createHotkeys } from '@tanstack/solid-hotkeys'
 import { layoutWithLines, prepareWithSegments } from '@chenglou/pretext'
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import * as THREE from 'three'
@@ -74,8 +75,8 @@ const palettes: Record<BlogEnvironment, EnvironmentPalette> = {
     accentSecondary: '#ffd36d',
     codePanel: 'rgba(18, 10, 8, 0.96)',
     codeText: '#ffd2ad',
-    rail: '#5b2e19',
-    railGlow: '#ffb36d',
+    rail: '#4d8d67',
+    railGlow: '#7db28b',
     floor: '#0b0706',
   },
 }
@@ -106,6 +107,62 @@ export default function MarkdownScene(props: {
     props.environment
     setActiveTrainIndex(0)
   })
+
+  createHotkeys(
+    [
+      {
+        hotkey: 'ArrowRight',
+        callback: (event) => {
+          if (!shouldHandleRunnerHotkey(event)) {
+            return
+          }
+
+          event.preventDefault()
+          moveTrainIndex(1)
+        },
+      },
+      {
+        hotkey: 'Enter',
+        callback: (event) => {
+          if (!shouldHandleRunnerHotkey(event)) {
+            return
+          }
+
+          event.preventDefault()
+          moveTrainIndex(1)
+        },
+      },
+      {
+        hotkey: 'Space',
+        callback: (event) => {
+          if (!shouldHandleRunnerHotkey(event)) {
+            return
+          }
+
+          event.preventDefault()
+          moveTrainIndex(1)
+        },
+      },
+      {
+        hotkey: 'ArrowLeft',
+        callback: (event) => {
+          if (!shouldHandleRunnerHotkey(event)) {
+            return
+          }
+
+          event.preventDefault()
+          moveTrainIndex(-1)
+        },
+      },
+    ],
+    () => ({
+      enabled:
+        props.environment === 'train' && props.documentModel.blocks.length > 0,
+      ignoreInputs: true,
+      preventDefault: false,
+      stopPropagation: false,
+    }),
+  )
 
   onMount(async () => {
     await document.fonts.ready
@@ -177,42 +234,6 @@ export default function MarkdownScene(props: {
 
     host.addEventListener('pointermove', handlePointerMove)
     host.addEventListener('pointerleave', resetPointer)
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (props.environment !== 'train') {
-        return
-      }
-
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.shiftKey
-      ) {
-        return
-      }
-
-      const target = event.target
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        target instanceof HTMLButtonElement
-      ) {
-        return
-      }
-
-      if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        moveTrainIndex(1)
-      } else if (event.key === 'ArrowLeft') {
-        event.preventDefault()
-        moveTrainIndex(-1)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
 
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
       reduceMotion = event.matches
@@ -338,7 +359,6 @@ export default function MarkdownScene(props: {
       resizeObserver.disconnect()
       host.removeEventListener('pointermove', handlePointerMove)
       host.removeEventListener('pointerleave', resetPointer)
-      window.removeEventListener('keydown', handleKeyDown)
       reducedMotionQuery?.removeEventListener?.('change', handleReducedMotionChange)
       clearGroup(stage)
       disposeRenderable(starField)
@@ -373,6 +393,34 @@ export default function MarkdownScene(props: {
       </Show>
     </div>
   )
+}
+
+function shouldHandleRunnerHotkey(event: KeyboardEvent) {
+  if (
+    event.defaultPrevented ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    event.shiftKey
+  ) {
+    return false
+  }
+
+  const target = event.target
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target instanceof HTMLButtonElement
+  ) {
+    return false
+  }
+
+  if (target instanceof HTMLElement && target.isContentEditable) {
+    return false
+  }
+
+  return true
 }
 
 function createContentCard(
@@ -633,17 +681,17 @@ function createRailWorld(trackLength: number, palette: EnvironmentPalette) {
   const railMaterial = new THREE.MeshStandardMaterial({
     color: palette.rail,
     emissive: palette.railGlow,
-    emissiveIntensity: 0.14,
-    metalness: 0.78,
-    roughness: 0.34,
+    emissiveIntensity: 0.05,
+    metalness: 0.68,
+    roughness: 0.46,
   })
   const glowMaterial = new THREE.MeshBasicMaterial({
     color: palette.railGlow,
     transparent: true,
-    opacity: 0.34,
+    opacity: 0.16,
   })
 
-  const railGeometry = new THREE.BoxGeometry(0.13, 0.13, trackLength + 18)
+  const railGeometry = new THREE.BoxGeometry(0.02, 0.02, trackLength + 18)
   const leftRail = new THREE.Mesh(railGeometry, railMaterial)
   leftRail.position.set(-0.82, 0.02, centerZ)
   world.add(leftRail)
@@ -653,17 +701,17 @@ function createRailWorld(trackLength: number, palette: EnvironmentPalette) {
   world.add(rightRail)
 
   const leftRailGlow = new THREE.Mesh(
-    new THREE.BoxGeometry(0.05, 0.05, trackLength + 18),
+    new THREE.BoxGeometry(0.008, 0.008, trackLength + 18),
     glowMaterial,
   )
-  leftRailGlow.position.set(-0.82, 0.16, centerZ)
+  leftRailGlow.position.set(-0.82, 0.09, centerZ)
   world.add(leftRailGlow)
 
   const rightRailGlow = new THREE.Mesh(
-    new THREE.BoxGeometry(0.05, 0.05, trackLength + 18),
+    new THREE.BoxGeometry(0.008, 0.008, trackLength + 18),
     glowMaterial,
   )
-  rightRailGlow.position.set(0.82, 0.16, centerZ)
+  rightRailGlow.position.set(0.82, 0.09, centerZ)
   world.add(rightRailGlow)
 
   return world

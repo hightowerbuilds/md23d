@@ -12,6 +12,7 @@
   "dependencies": {
     "@chenglou/pretext": "^0.0.5",
     "@tanstack/router-plugin": "^1.133.21",
+    "@tanstack/solid-hotkeys": "^0.9.1",
     "@tanstack/solid-router": "latest",
     "@tanstack/solid-router-devtools": "latest",
     "@tanstack/solid-router-ssr-query": "latest",
