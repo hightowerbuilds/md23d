@@ -46,3 +46,4 @@ bun run build
 - Add richer inline markdown styling
 - Expand the environment system beyond the first two scene types
 - Export shareable scene presets per article
+# md23d
