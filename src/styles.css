@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600&family=Syne:wght@500;600;700;800&display=swap');
 
 :root {
   --bg: #050505;
@@ -27,7 +27,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Outfit', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -52,7 +52,7 @@ code {
   padding: 0.14rem 0.42rem;
   background: var(--bg-elevated);
   color: var(--text);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.9em;
 }
 
@@ -154,7 +154,7 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.72rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -286,7 +286,7 @@ code {
   display: flex;
   align-items: baseline;
   gap: 0.34rem;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.74rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -307,7 +307,7 @@ code {
   place-items: center;
   min-height: calc(100vh - 4.5rem);
   color: var(--text-soft);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -340,7 +340,7 @@ code {
   border-bottom: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -379,7 +379,7 @@ code {
 .eyebrow {
   margin: 0 0 0.8rem;
   color: var(--text-dim);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -405,7 +405,7 @@ code {
   top: 4.2rem;
   left: 50%;
   transform: translateX(-50%);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.68rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -414,7 +414,7 @@ code {
 
 .drift-hint {
   margin-top: 0.6rem;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.58rem;
   letter-spacing: 0.08em;
   color: var(--text-dim);
@@ -435,7 +435,7 @@ code {
 }
 
 .orbit-focus-label {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.74rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -443,7 +443,7 @@ code {
 }
 
 .orbit-focus-hint {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   color: var(--text-dim);
@@ -470,7 +470,7 @@ code {
 }
 
 .cosmos-card-label {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -491,7 +491,7 @@ code {
 }
 
 .cosmos-card-prose .cosmos-card-content {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 1.08rem;
   line-height: 1.78;
   color: rgba(200, 218, 255, 0.62);
@@ -500,7 +500,7 @@ code {
 }
 
 .cosmos-card-context {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Outfit', sans-serif;
   font-size: 0.82rem;
   line-height: 1.7;
   color: rgba(160, 180, 220, 0.38);
@@ -516,7 +516,7 @@ code {
   margin-top: 0.6rem;
   padding-top: 0.6rem;
   border-top: 1px solid rgba(120, 150, 220, 0.12);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', monospace;
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   color: rgba(140, 170, 230, 0.28);

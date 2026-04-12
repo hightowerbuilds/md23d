@@ -174,7 +174,8 @@ export default function MarkdownScene(props: {
         callback: (event) => {
           if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          moveCosmosIndex(1)
+          if (props.environment === 'drift') triggerDriftTransitionRef?.(1)
+          else moveCosmosIndex(1)
         },
       },
       {
@@ -182,7 +183,8 @@ export default function MarkdownScene(props: {
         callback: (event) => {
           if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          moveCosmosIndex(1)
+          if (props.environment === 'drift') triggerDriftTransitionRef?.(1)
+          else moveCosmosIndex(1)
         },
       },
       {
@@ -190,7 +192,8 @@ export default function MarkdownScene(props: {
         callback: (event) => {
           if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          moveCosmosIndex(1)
+          if (props.environment === 'drift') triggerDriftTransitionRef?.(1)
+          else moveCosmosIndex(1)
         },
       },
       {
@@ -198,13 +201,14 @@ export default function MarkdownScene(props: {
         callback: (event) => {
           if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          moveCosmosIndex(-1)
+          if (props.environment === 'drift') triggerDriftTransitionRef?.(-1)
+          else moveCosmosIndex(-1)
         },
       },
     ],
     () => ({
       enabled:
-        props.environment === 'cosmos' &&
+        (props.environment === 'cosmos' || props.environment === 'drift') &&
         props.documentModel.blocks.length > 0,
       ignoreInputs: true,
       preventDefault: false,
@@ -609,10 +613,17 @@ export default function MarkdownScene(props: {
         standardStarField.rotation.y += 0.00015
         standardStarField.rotation.x = Math.sin(seconds * 0.05) * 0.03
 
-        // Gentle camera parallax
-        camera.position.x += (pointer.x * 0.6 - camera.position.x) * 0.02
-        camera.position.y += (pointer.y * -0.3 - camera.position.y) * 0.02
-        camera.position.z += (7 - camera.position.z) * 0.03
+        // Camera dynamics — pulls back during dissolve, pushes in during form
+        const cameraRestZ = 7
+        const cameraTargetZ =
+          driftState === 'dissolving'
+            ? cameraRestZ + 1.8 * driftProgress
+            : driftState === 'forming'
+              ? cameraRestZ + 1.8 * (1 - driftProgress)
+              : cameraRestZ
+        camera.position.x += (pointer.x * 0.8 - camera.position.x) * 0.025
+        camera.position.y += (pointer.y * -0.4 - camera.position.y) * 0.025
+        camera.position.z += (cameraTargetZ - camera.position.z) * 0.04
         camera.lookAt(0, 0, 0)
 
         if (driftGeometry && driftSlides.length > 0) {
@@ -621,7 +632,7 @@ export default function MarkdownScene(props: {
           const positions = posAttr.array as Float32Array
           const colors = colAttr.array as Float32Array
           const slide = driftSlides[activeDriftIndex()]!
-          const lerpSpeed = reduceMotion ? 0.08 : 0.045
+          const lerpSpeed = reduceMotion ? 0.08 : 0.05
 
           if (driftState === 'forming') {
             driftProgress += DRIFT_FORM_SPEED
@@ -629,34 +640,39 @@ export default function MarkdownScene(props: {
               driftState = 'idle'
               driftProgress = 1
             }
-            driftGroup.rotation.y += (0 - driftGroup.rotation.y) * 0.04
+            // Counter-spin back to neutral
+            driftGroup.rotation.y += (0 - driftGroup.rotation.y) * 0.05
+            driftGroup.rotation.x += (0 - driftGroup.rotation.x) * 0.05
+
+            const ease = driftProgress * driftProgress // accelerate convergence
 
             for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
               const i3 = i * 3
               if (i < slide.textCount) {
-                positions[i3]! += (slide.textPositions[i3]! - positions[i3]!) * lerpSpeed
+                const speed = lerpSpeed * (0.6 + ease * 0.8)
+                positions[i3]! += (slide.textPositions[i3]! - positions[i3]!) * speed
                 positions[i3 + 1]! +=
-                  (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * lerpSpeed
+                  (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * speed
                 positions[i3 + 2]! +=
-                  (slide.textPositions[i3 + 2]! - positions[i3 + 2]!) * lerpSpeed
-                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * lerpSpeed
+                  (slide.textPositions[i3 + 2]! - positions[i3 + 2]!) * speed
+                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * speed
                 colors[i3 + 1]! +=
-                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * lerpSpeed
+                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * speed
                 colors[i3 + 2]! +=
-                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * lerpSpeed
+                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * speed
               } else {
-                // Ambient cloud particles
+                // Ambient cloud — gentle drift inward
                 positions[i3]! +=
-                  (driftCloudPositions[i3]! - positions[i3]!) * 0.008
+                  (driftCloudPositions[i3]! - positions[i3]!) * 0.01
                 positions[i3 + 1]! +=
-                  (driftCloudPositions[i3 + 1]! - positions[i3 + 1]!) * 0.008
+                  (driftCloudPositions[i3 + 1]! - positions[i3 + 1]!) * 0.01
                 positions[i3 + 2]! +=
-                  (driftCloudPositions[i3 + 2]! - positions[i3 + 2]!) * 0.008
-                positions[i3]! += Math.sin(seconds * 0.15 + i) * 0.002
-                positions[i3 + 1]! += Math.cos(seconds * 0.12 + i * 0.7) * 0.002
-                colors[i3]! += (0.15 - colors[i3]!) * 0.02
-                colors[i3 + 1]! += (0.2 - colors[i3 + 1]!) * 0.02
-                colors[i3 + 2]! += (0.35 - colors[i3 + 2]!) * 0.02
+                  (driftCloudPositions[i3 + 2]! - positions[i3 + 2]!) * 0.01
+                positions[i3]! += Math.sin(seconds * 0.2 + i) * 0.002
+                positions[i3 + 1]! += Math.cos(seconds * 0.15 + i * 0.7) * 0.002
+                colors[i3]! += (0.12 - colors[i3]!) * 0.015
+                colors[i3 + 1]! += (0.18 - colors[i3 + 1]!) * 0.015
+                colors[i3 + 2]! += (0.32 - colors[i3 + 2]!) * 0.015
               }
             }
           } else if (driftState === 'dissolving') {
@@ -666,51 +682,67 @@ export default function MarkdownScene(props: {
               driftProgress = 0
             }
 
-            // Spin during dissolve
+            // Vortex spin during dissolve
             if (!isDriftDragging) {
               driftGroup.rotation.y += driftSpinVelocity
-              driftSpinVelocity *= 0.985
+              driftSpinVelocity *= 0.982
+              // Add slight tilt for drama
+              driftGroup.rotation.x =
+                Math.sin(driftProgress * Math.PI) * 0.15 * Math.sign(driftSpinVelocity || 1)
             }
 
-            // Scatter all particles to cloud
+            // Spiral scatter — each particle spirals outward
             for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
               const i3 = i * 3
-              const speed = 0.025 + (i % 7) * 0.005
-              positions[i3]! += (driftCloudPositions[i3]! - positions[i3]!) * speed
-              positions[i3 + 1]! +=
-                (driftCloudPositions[i3 + 1]! - positions[i3 + 1]!) * speed
-              positions[i3 + 2]! +=
-                (driftCloudPositions[i3 + 2]! - positions[i3 + 2]!) * speed
-              // Fade to ambient color
-              colors[i3]! += (0.2 - colors[i3]!) * 0.03
-              colors[i3 + 1]! += (0.28 - colors[i3 + 1]!) * 0.03
-              colors[i3 + 2]! += (0.5 - colors[i3 + 2]!) * 0.03
+              const phase = (i / DRIFT_PARTICLE_COUNT) * Math.PI * 2
+              const spiralAngle = phase + driftProgress * Math.PI * 3
+              const spiralRadius = driftProgress * (1.5 + (i % 11) * 0.2)
+              const cloudX = driftCloudPositions[i3]! + Math.cos(spiralAngle) * spiralRadius * 0.4
+              const cloudY = driftCloudPositions[i3 + 1]! + Math.sin(spiralAngle) * spiralRadius * 0.3
+              const cloudZ = driftCloudPositions[i3 + 2]! + Math.sin(phase + driftProgress * 2) * spiralRadius * 0.5
+
+              const speed = 0.03 + (i % 7) * 0.006
+              positions[i3]! += (cloudX - positions[i3]!) * speed
+              positions[i3 + 1]! += (cloudY - positions[i3 + 1]!) * speed
+              positions[i3 + 2]! += (cloudZ - positions[i3 + 2]!) * speed
+
+              // Vivid transition colors — pulse through brighter blue-violet
+              const pulse = Math.sin(driftProgress * Math.PI)
+              colors[i3]! += (0.25 + pulse * 0.3 - colors[i3]!) * 0.04
+              colors[i3 + 1]! += (0.2 + pulse * 0.15 - colors[i3 + 1]!) * 0.04
+              colors[i3 + 2]! += (0.55 + pulse * 0.35 - colors[i3 + 2]!) * 0.04
             }
           } else {
-            // Idle — subtle breathing
+            // Idle — subtle breathing with micro-drift
             if (!isDriftDragging) {
               driftGroup.rotation.y += (0 - driftGroup.rotation.y) * 0.03
+              driftGroup.rotation.x += (0 - driftGroup.rotation.x) * 0.03
             }
 
             for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
               const i3 = i * 3
               if (i < slide.textCount) {
                 positions[i3]! +=
-                  (slide.textPositions[i3]! - positions[i3]!) * 0.06
+                  (slide.textPositions[i3]! - positions[i3]!) * 0.07
                 positions[i3 + 1]! +=
-                  (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * 0.06
+                  (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * 0.07
+                // Breathing: gentle z-wave propagates across the text
+                const wave = Math.sin(
+                  seconds * 0.5 + positions[i3]! * 0.8 + positions[i3 + 1]! * 0.6,
+                )
                 positions[i3 + 2]! =
-                  slide.textPositions[i3 + 2]! +
-                  Math.sin(seconds * 0.4 + i * 0.008) * 0.015
-                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * 0.04
+                  slide.textPositions[i3 + 2]! + wave * 0.02
+                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * 0.05
                 colors[i3 + 1]! +=
-                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * 0.04
+                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * 0.05
                 colors[i3 + 2]! +=
-                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * 0.04
+                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * 0.05
               } else {
-                positions[i3]! += Math.sin(seconds * 0.2 + i) * 0.001
-                positions[i3 + 1]! += Math.cos(seconds * 0.15 + i * 0.7) * 0.001
-                positions[i3 + 2]! += Math.sin(seconds * 0.25 + i * 1.3) * 0.001
+                // Ambient cloud — slow orbital drift
+                const orbit = seconds * 0.08 + i * 0.3
+                positions[i3]! += Math.sin(orbit) * 0.0015
+                positions[i3 + 1]! += Math.cos(orbit * 0.7) * 0.0012
+                positions[i3 + 2]! += Math.sin(orbit * 1.3) * 0.001
               }
             }
           }
@@ -978,19 +1010,19 @@ function createContentCard(
   ctx.fillRect(PANEL_PADDING_X + 190, 44, canvas.width - PANEL_PADDING_X * 2 - 230, 6)
 
   ctx.fillStyle = palette.textSoft
-  ctx.font = '600 20px "IBM Plex Sans"'
+  ctx.font = '600 20px "Outfit"'
   ctx.fillText(block.label.toUpperCase(), PANEL_PADDING_X, 88)
 
   let cursorY = 148
 
   if (block.kind === 'heading') {
     ctx.fillStyle = palette.text
-    ctx.font = '700 46px "Space Grotesk"'
+    ctx.font = '700 46px "Syne"'
     drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
     cursorY += metrics.titleLines.height + 28
   } else {
     ctx.fillStyle = palette.text
-    ctx.font = '700 30px "Space Grotesk"'
+    ctx.font = '700 30px "Syne"'
     drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
     cursorY += metrics.titleLines.height + 18
   }
@@ -1056,17 +1088,17 @@ function measureCard(block: BlogBlock) {
   const titleText = getCardTitle(block)
   const titleFont =
     block.kind === 'heading'
-      ? '700 46px "Space Grotesk"'
-      : '700 30px "Space Grotesk"'
+      ? '700 46px "Syne"'
+      : '700 30px "Syne"'
   const titleLineHeight = block.kind === 'heading' ? 56 : 38
   const bodyFont =
     block.kind === 'diagram'
-      ? '500 20px "IBM Plex Mono"'
+      ? '500 20px "JetBrains Mono"'
       : block.kind === 'code' || block.kind === 'table' || block.kind === 'formula'
-      ? '500 24px "IBM Plex Mono"'
+      ? '500 24px "JetBrains Mono"'
       : block.kind === 'quote'
-        ? '500 30px "IBM Plex Sans"'
-        : '500 28px "IBM Plex Sans"'
+        ? '500 30px "Outfit"'
+        : '500 28px "Outfit"'
   const bodyLineHeight =
     block.kind === 'diagram'
       ? 25
@@ -1187,19 +1219,19 @@ function buildDriftSlide(
 
   // Label
   ctx.fillStyle = palette.accent
-  ctx.font = '600 20px "IBM Plex Sans"'
+  ctx.font = '600 20px "Outfit"'
   ctx.fillText(block.label.toUpperCase(), PANEL_PADDING_X, 88)
 
   // Title
   let cursorY = 148
   if (block.kind === 'heading') {
     ctx.fillStyle = palette.text
-    ctx.font = '700 46px "Space Grotesk"'
+    ctx.font = '700 46px "Syne"'
     drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
     cursorY += metrics.titleLines.height + 28
   } else {
     ctx.fillStyle = palette.text
-    ctx.font = '700 30px "Space Grotesk"'
+    ctx.font = '700 30px "Syne"'
     drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
     cursorY += metrics.titleLines.height + 18
   }
