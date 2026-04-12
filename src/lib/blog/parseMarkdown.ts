@@ -15,9 +15,11 @@ const DIAGRAM_LANGUAGES = new Set([
   'dot',
   'graphviz',
 ])
+const MATH_LANGUAGES = new Set(['math', 'latex', 'katex', 'tex'])
 
 export function parseMarkdownDocument(markdown: string): BlogDocument {
-  const source = markdown.trim() || '# Untitled Flight\n\nStart writing to build a 3D article.'
+  const raw = markdown.trim() || '# Untitled Flight\n\nStart writing to build a 3D article.'
+  const source = preprocessMathBlocks(raw)
   const tokens = Lexer.lex(source)
   const blocks: BlogBlock[] = []
   let headingCount = 0
@@ -26,10 +28,13 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
   let codeCount = 0
   let quoteCount = 0
   let tableCount = 0
+  let formulaCount = 0
+  let currentSection = 0
 
   for (const token of tokens) {
     switch (token.type) {
       case 'heading': {
+        currentSection += 1
         headingCount += 1
         blocks.push({
           id: `heading-${headingCount}`,
@@ -37,6 +42,7 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
           text: normalizeWhitespace(flattenInlineTokens(token.tokens)),
           label: `Waypoint ${headingCount.toString().padStart(2, '0')}`,
           level: token.depth,
+          sectionIndex: currentSection,
         })
         break
       }
@@ -55,6 +61,7 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
             kind: 'paragraph',
             text: page,
             label: `Passage ${paragraphCount.toString().padStart(2, '0')}`,
+            sectionIndex: currentSection,
           })
         }
         break
@@ -83,11 +90,25 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
             label: token.ordered
               ? `Sequence ${listCount.toString().padStart(2, '0')}`
               : `Checklist ${listCount.toString().padStart(2, '0')}`,
+            sectionIndex: currentSection,
           })
         }
         break
       }
       case 'code': {
+        if (isMathLanguage(token.lang)) {
+          formulaCount += 1
+          blocks.push({
+            id: `formula-${formulaCount}`,
+            kind: 'formula',
+            text: token.text.replace(/\r\n/g, '\n').trim(),
+            label: `Formula ${formulaCount.toString().padStart(2, '0')}`,
+            language: token.lang,
+            sectionIndex: currentSection,
+          })
+          break
+        }
+
         const kind = isDiagramLanguage(token.lang) ? 'diagram' : 'code'
         const lines = normalizeCodeText(token.text).split('\n')
         const pageSize = kind === 'diagram' ? DIAGRAM_PAGE_SIZE : CODE_PAGE_SIZE
@@ -100,6 +121,7 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
             text: slice.join('\n'),
             label: formatCodeLabel(token.lang, kind, codeCount),
             language: token.lang,
+            sectionIndex: currentSection,
           })
         }
         break
@@ -117,6 +139,7 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
             kind: 'quote',
             text: page,
             label: `Signal ${quoteCount.toString().padStart(2, '0')}`,
+            sectionIndex: currentSection,
           })
         }
         break
@@ -134,7 +157,19 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
           kind: 'table',
           text: rows.join('\n'),
           label: `Data Grid ${tableCount.toString().padStart(2, '0')}`,
+          sectionIndex: currentSection,
         })
+        break
+      }
+      case 'hr': {
+        currentSection += 1
+        break
+      }
+      case 'html': {
+        const notesMatch = token.text.match(/<!--\s*notes?:\s*([\s\S]*?)\s*-->/)
+        if (notesMatch && blocks.length > 0) {
+          blocks[blocks.length - 1]!.notes = notesMatch[1]!.trim()
+        }
         break
       }
       default:
@@ -276,6 +311,16 @@ function normalizeCodeText(text: string): string {
 
 function isDiagramLanguage(language?: string) {
   return language ? DIAGRAM_LANGUAGES.has(language.trim().toLowerCase()) : false
+}
+
+function isMathLanguage(language?: string) {
+  return language ? MATH_LANGUAGES.has(language.trim().toLowerCase()) : false
+}
+
+function preprocessMathBlocks(source: string): string {
+  return source.replace(/\$\$\s*([\s\S]*?)\s*\$\$/g, (_, math: string) => {
+    return `\`\`\`math\n${math.trim()}\n\`\`\``
+  })
 }
 
 function formatCodeLabel(

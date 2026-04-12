@@ -252,6 +252,14 @@ function App() {
                         setStage('scene')
                       }}
                     />
+                    <EnvironmentButton
+                      active={false}
+                      title="Cosmos"
+                      onClick={() => {
+                        setEnvironment('cosmos')
+                        setStage('scene')
+                      }}
+                    />
                   </div>
                 </div>
               </Match>
@@ -307,6 +315,14 @@ function App() {
               title="Runner"
               onClick={() => {
                 setEnvironment('train')
+                setStage('scene')
+              }}
+            />
+            <EnvironmentButton
+              active={environment() === 'cosmos'}
+              title="Cosmos"
+              onClick={() => {
+                setEnvironment('cosmos')
                 setStage('scene')
               }}
             />

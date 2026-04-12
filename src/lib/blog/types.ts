@@ -1,4 +1,4 @@
-export type BlogEnvironment = 'space' | 'train'
+export type BlogEnvironment = 'space' | 'train' | 'cosmos'
 
 export type BlogBlockKind =
   | 'heading'
@@ -8,6 +8,7 @@ export type BlogBlockKind =
   | 'code'
   | 'diagram'
   | 'table'
+  | 'formula'
 
 export interface BlogBlock {
   id: string
@@ -17,6 +18,8 @@ export interface BlogBlock {
   level?: number
   items?: string[]
   language?: string
+  notes?: string
+  sectionIndex?: number
 }
 
 export interface BlogDocument {

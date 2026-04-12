@@ -1,5 +1,12 @@
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import { createHotkeys } from '@tanstack/solid-hotkeys'
-import { layoutWithLines, prepareWithSegments } from '@chenglou/pretext'
+import {
+  clearCache as clearPretextCache,
+  layoutWithLines,
+  prepareWithSegments,
+  type PreparedTextWithSegments,
+} from '@chenglou/pretext'
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import * as THREE from 'three'
 
@@ -15,6 +22,30 @@ const PANEL_PADDING_X = 72
 const PANEL_PADDING_Y = 60
 const RUNNER_VIEW_OFFSET = 5.8
 const RUNNER_BASE_SCALE = 1.72
+
+// Pretext measurement cache — survives across environment switches for the same document
+const preparedCache = new Map<string, PreparedTextWithSegments>()
+let preparedCacheDocId: string | null = null
+
+function getOrPrepare(
+  key: string,
+  text: string,
+  font: string,
+  options?: { whiteSpace?: 'normal' | 'pre-wrap' },
+): PreparedTextWithSegments {
+  const cached = preparedCache.get(key)
+  if (cached) return cached
+  const prepared = prepareWithSegments(text, font, options)
+  preparedCache.set(key, prepared)
+  return prepared
+}
+
+function invalidatePreparedCache(docId: string) {
+  if (preparedCacheDocId !== docId) {
+    preparedCache.clear()
+    preparedCacheDocId = docId
+  }
+}
 
 type SceneCard = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
@@ -79,6 +110,24 @@ const palettes: Record<BlogEnvironment, EnvironmentPalette> = {
     railGlow: '#7db28b',
     floor: '#0b0706',
   },
+  cosmos: {
+    sceneBackground: '#000000',
+    fog: '#000000',
+    star: '#ffffff',
+    rim: '#2a3660',
+    panel: 'rgba(4, 6, 16, 0.97)',
+    panelSoft: 'rgba(8, 10, 24, 0.82)',
+    border: 'rgba(90, 130, 220, 0.24)',
+    text: '#d8e8ff',
+    textSoft: '#7888b0',
+    accent: '#7aa0f0',
+    accentSecondary: '#a0c0ff',
+    codePanel: 'rgba(2, 3, 10, 0.98)',
+    codeText: '#a8c4f0',
+    rail: '#182040',
+    railGlow: '#3858b0',
+    floor: '#020308',
+  },
 }
 
 export default function MarkdownScene(props: {
@@ -86,18 +135,24 @@ export default function MarkdownScene(props: {
   environment: BlogEnvironment | null
 }) {
   let host!: HTMLDivElement
+
   const [activeTrainIndex, setActiveTrainIndex] = createSignal(0)
   const moveTrainIndex = (direction: 1 | -1) => {
     setActiveTrainIndex((index) => {
       const total = props.documentModel.blocks.length
-      if (total <= 0) {
-        return 0
-      }
+      if (total <= 0) return 0
+      if (direction > 0) return index + 1 < total ? index + 1 : 0
+      return index > 0 ? index - 1 : total - 1
+    })
+  }
 
-      if (direction > 0) {
-        return index + 1 < total ? index + 1 : 0
-      }
-
+  const [activeCosmosIndex, setActiveCosmosIndex] = createSignal(0)
+  const [orbitFocusLabel, setOrbitFocusLabel] = createSignal<string | null>(null)
+  const moveCosmosIndex = (direction: 1 | -1) => {
+    setActiveCosmosIndex((index) => {
+      const total = props.documentModel.blocks.length
+      if (total <= 0) return 0
+      if (direction > 0) return index + 1 < total ? index + 1 : 0
       return index > 0 ? index - 1 : total - 1
     })
   }
@@ -106,6 +161,7 @@ export default function MarkdownScene(props: {
     props.documentModel
     props.environment
     setActiveTrainIndex(0)
+    setActiveCosmosIndex(0)
   })
 
   createHotkeys(
@@ -113,51 +169,44 @@ export default function MarkdownScene(props: {
       {
         hotkey: 'ArrowRight',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) {
-            return
-          }
-
+          if (!shouldHandleRunnerHotkey(event)) return
           event.preventDefault()
-          moveTrainIndex(1)
+          if (props.environment === 'train') moveTrainIndex(1)
+          else moveCosmosIndex(1)
         },
       },
       {
         hotkey: 'Enter',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) {
-            return
-          }
-
+          if (!shouldHandleRunnerHotkey(event)) return
           event.preventDefault()
-          moveTrainIndex(1)
+          if (props.environment === 'train') moveTrainIndex(1)
+          else moveCosmosIndex(1)
         },
       },
       {
         hotkey: 'Space',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) {
-            return
-          }
-
+          if (!shouldHandleRunnerHotkey(event)) return
           event.preventDefault()
-          moveTrainIndex(1)
+          if (props.environment === 'train') moveTrainIndex(1)
+          else moveCosmosIndex(1)
         },
       },
       {
         hotkey: 'ArrowLeft',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) {
-            return
-          }
-
+          if (!shouldHandleRunnerHotkey(event)) return
           event.preventDefault()
-          moveTrainIndex(-1)
+          if (props.environment === 'train') moveTrainIndex(-1)
+          else moveCosmosIndex(-1)
         },
       },
     ],
     () => ({
       enabled:
-        props.environment === 'train' && props.documentModel.blocks.length > 0,
+        (props.environment === 'train' || props.environment === 'cosmos') &&
+        props.documentModel.blocks.length > 0,
       ignoreInputs: true,
       preventDefault: false,
       stopPropagation: false,
@@ -181,14 +230,16 @@ export default function MarkdownScene(props: {
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 220)
     const stage = new THREE.Group()
-    const starField = createStarField(getPalette(props.environment).star)
+    const standardStarField = createStarField(getPalette(props.environment).star)
+    const cosmosStarField = createCosmosStarField()
     const reducedMotionQuery =
       typeof window.matchMedia === 'function'
         ? window.matchMedia('(prefers-reduced-motion: reduce)')
         : null
 
     scene.add(stage)
-    scene.add(starField)
+    scene.add(standardStarField)
+    scene.add(cosmosStarField)
     scene.add(new THREE.HemisphereLight('#d4eeff', '#06080d', 1.35))
 
     const keyLight = new THREE.DirectionalLight('#ffffff', 1.25)
@@ -200,18 +251,20 @@ export default function MarkdownScene(props: {
     scene.add(fillLight)
 
     const pointer = { x: 0, y: 0 }
+    const raycaster = new THREE.Raycaster()
+    const clickNdc = new THREE.Vector2()
     let cards: SceneCard[] = []
     let trackLength = 72
     let frameId = 0
     let currentEnvironment = props.environment
     let reduceMotion = reducedMotionQuery?.matches ?? false
+    let focusedCardIndex: number | null = null
+    let focusTarget = new THREE.Vector3()
+    let focusLookAt = new THREE.Vector3()
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0]
-      if (!entry) {
-        return
-      }
-
+      if (!entry) return
       const width = Math.max(320, entry.contentRect.width)
       const height = Math.max(360, entry.contentRect.height)
       renderer.setSize(width, height, false)
@@ -232,8 +285,70 @@ export default function MarkdownScene(props: {
       pointer.y = 0
     }
 
+    const handleCanvasClick = (event: MouseEvent) => {
+      if (currentEnvironment !== 'space' || cards.length === 0) return
+
+      const rect = host.getBoundingClientRect()
+      clickNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+      clickNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+
+      raycaster.setFromCamera(clickNdc, camera)
+      const intersects = raycaster.intersectObjects(cards.map((c) => c.mesh))
+
+      if (intersects.length > 0) {
+        const hitMesh = intersects[0]!.object
+        const hitIndex = cards.findIndex((c) => c.mesh === hitMesh)
+        if (hitIndex >= 0 && hitIndex !== focusedCardIndex) {
+          focusedCardIndex = hitIndex
+          const card = cards[hitIndex]!
+          const normal = new THREE.Vector3(0, 0, 1).applyEuler(card.baseRotation)
+          focusTarget.copy(card.basePosition).addScaledVector(normal, 3.2)
+          focusLookAt.copy(card.basePosition)
+          const block = props.documentModel.blocks[hitIndex]
+          setOrbitFocusLabel(block ? block.label : null)
+        } else {
+          focusedCardIndex = null
+          setOrbitFocusLabel(null)
+        }
+      } else {
+        focusedCardIndex = null
+        setOrbitFocusLabel(null)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (currentEnvironment !== 'space') return
+      if (event.key === 'Escape' && focusedCardIndex !== null) {
+        event.preventDefault()
+        focusedCardIndex = null
+        setOrbitFocusLabel(null)
+      }
+      if (focusedCardIndex !== null && (event.key === 'ArrowRight' || event.key === 'ArrowDown')) {
+        event.preventDefault()
+        focusedCardIndex = (focusedCardIndex + 1) % cards.length
+        const card = cards[focusedCardIndex]!
+        const normal = new THREE.Vector3(0, 0, 1).applyEuler(card.baseRotation)
+        focusTarget.copy(card.basePosition).addScaledVector(normal, 3.2)
+        focusLookAt.copy(card.basePosition)
+        const block = props.documentModel.blocks[focusedCardIndex]
+        setOrbitFocusLabel(block ? block.label : null)
+      }
+      if (focusedCardIndex !== null && (event.key === 'ArrowLeft' || event.key === 'ArrowUp')) {
+        event.preventDefault()
+        focusedCardIndex = (focusedCardIndex - 1 + cards.length) % cards.length
+        const card = cards[focusedCardIndex]!
+        const normal = new THREE.Vector3(0, 0, 1).applyEuler(card.baseRotation)
+        focusTarget.copy(card.basePosition).addScaledVector(normal, 3.2)
+        focusLookAt.copy(card.basePosition)
+        const block = props.documentModel.blocks[focusedCardIndex]
+        setOrbitFocusLabel(block ? block.label : null)
+      }
+    }
+
     host.addEventListener('pointermove', handlePointerMove)
     host.addEventListener('pointerleave', resetPointer)
+    host.addEventListener('click', handleCanvasClick)
+    document.addEventListener('keydown', handleKeyDown)
 
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
       reduceMotion = event.matches
@@ -242,67 +357,123 @@ export default function MarkdownScene(props: {
     reducedMotionQuery?.addEventListener?.('change', handleReducedMotionChange)
 
     const rebuildScene = () => {
-      if (!isBlogEnvironment(props.environment)) {
-        return
-      }
+      if (!isBlogEnvironment(props.environment)) return
 
       currentEnvironment = props.environment
       trackLength = 72
+      focusedCardIndex = null
       clearGroup(stage)
+
+      const docId = props.documentModel.blocks.map((b) => b.id).join(':')
+      invalidatePreparedCache(docId)
 
       const palette = palettes[currentEnvironment]
       scene.background = new THREE.Color(palette.sceneBackground)
+
+      if (currentEnvironment === 'cosmos') {
+        scene.fog = null
+        standardStarField.visible = false
+        cosmosStarField.visible = true
+        fillLight.visible = false
+        camera.position.set(0, 0, 0.1)
+        camera.lookAt(0, 0.05, -1)
+        cards = []
+        return
+      }
+
+      standardStarField.visible = true
+      cosmosStarField.visible = false
+      fillLight.visible = true
       scene.fog = new THREE.Fog(palette.fog, 14, currentEnvironment === 'space' ? 72 : 84)
-      ;(starField.material as THREE.PointsMaterial).color.set(palette.star)
-      starField.position.set(0, 0, 0)
-      starField.visible = true
+      ;(standardStarField.material as THREE.PointsMaterial).color.set(palette.star)
+      standardStarField.position.set(0, 0, 0)
       fillLight.color.set(palette.accent)
       fillLight.intensity = currentEnvironment === 'space' ? 20 : 13
 
       cards = props.documentModel.blocks.map((block, index) =>
-        createContentCard(block, index, currentEnvironment, renderer.capabilities.getMaxAnisotropy()),
+        createContentCard(
+          block,
+          index,
+          currentEnvironment!,
+          renderer.capabilities.getMaxAnisotropy(),
+        ),
       )
 
       if (currentEnvironment === 'space') {
         arrangeSpace(cards, stage)
         stage.add(createNebulaRing(palette))
       } else {
-        trackLength = arrangeTrain(cards, stage)
+        trackLength = arrangeTrain(cards, props.documentModel.blocks, stage, palette)
         stage.add(createRailWorld(trackLength, palette))
       }
     }
 
     const animate = (time: number) => {
       frameId = requestAnimationFrame(animate)
-
       const seconds = time * 0.001
-      if (currentEnvironment === 'space') {
-        starField.rotation.y += 0.00025
-        starField.rotation.x = Math.sin(seconds * 0.08) * 0.05
-      } else {
-        starField.rotation.y = 0
-        starField.rotation.x = 0
-      }
 
-      if (currentEnvironment === 'space') {
-        camera.position.x += (pointer.x * 1.9 - camera.position.x) * 0.032
-        camera.position.y += (1.4 - pointer.y * 0.7 - camera.position.y) * 0.032
-        camera.position.z += (8.8 - camera.position.z) * 0.045
-        camera.lookAt(0, 0.7, -9.5)
-        stage.rotation.y = Math.sin(seconds * 0.18) * 0.12
-        stage.rotation.x = Math.cos(seconds * 0.13) * 0.03
+      if (currentEnvironment === 'cosmos') {
+        cosmosStarField.rotation.y += 0.000055
+        cosmosStarField.rotation.x = Math.sin(seconds * 0.025) * 0.012
+      } else if (currentEnvironment === 'space') {
+        standardStarField.rotation.y += 0.00025
+        standardStarField.rotation.x = Math.sin(seconds * 0.08) * 0.05
 
-        for (const [index, card] of cards.entries()) {
-          card.mesh.position.x =
-            card.basePosition.x + Math.cos(seconds * 0.34 + index) * 0.12
-          card.mesh.position.y =
-            card.basePosition.y + Math.sin(seconds * 0.7 + index * 0.6) * 0.2
-          card.mesh.rotation.y =
-            card.baseRotation.y + Math.sin(seconds * 0.5 + index * 0.4) * 0.06
-          card.mesh.rotation.x =
-            card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
+        if (focusedCardIndex !== null && focusedCardIndex < cards.length) {
+          // Focused orbit: camera lerps toward the selected card
+          camera.position.lerp(focusTarget, reduceMotion ? 0.1 : 0.055)
+          const currentLook = new THREE.Vector3()
+          camera.getWorldDirection(currentLook)
+          currentLook.multiplyScalar(5).add(camera.position)
+          currentLook.lerp(focusLookAt, reduceMotion ? 0.1 : 0.07)
+          camera.lookAt(currentLook)
+
+          stage.rotation.y += (0 - stage.rotation.y) * 0.06
+          stage.rotation.x += (0 - stage.rotation.x) * 0.06
+
+          for (const [index, card] of cards.entries()) {
+            const isFocused = index === focusedCardIndex
+            const targetOpacity = isFocused ? 1 : 0.12
+            card.mesh.material.opacity +=
+              (targetOpacity - card.mesh.material.opacity) * 0.08
+
+            const drift = isFocused ? 0.03 : 0.06
+            card.mesh.position.x =
+              card.basePosition.x + Math.cos(seconds * 0.2 + index) * drift
+            card.mesh.position.y =
+              card.basePosition.y + Math.sin(seconds * 0.35 + index * 0.6) * drift
+            card.mesh.rotation.y = card.baseRotation.y
+            card.mesh.rotation.x = card.baseRotation.x
+          }
+        } else {
+          // Unfocused orbit: free-floating constellation
+          camera.position.x += (pointer.x * 1.9 - camera.position.x) * 0.032
+          camera.position.y += (1.4 - pointer.y * 0.7 - camera.position.y) * 0.032
+          camera.position.z += (8.8 - camera.position.z) * 0.045
+          camera.lookAt(0, 0.7, -9.5)
+          stage.rotation.y = Math.sin(seconds * 0.18) * 0.12
+          stage.rotation.x = Math.cos(seconds * 0.13) * 0.03
+
+          for (const [index, card] of cards.entries()) {
+            card.mesh.material.opacity +=
+              (1 - card.mesh.material.opacity) * 0.06
+
+            card.mesh.position.x =
+              card.basePosition.x + Math.cos(seconds * 0.34 + index) * 0.12
+            card.mesh.position.y =
+              card.basePosition.y + Math.sin(seconds * 0.7 + index * 0.6) * 0.2
+            card.mesh.rotation.y =
+              card.baseRotation.y + Math.sin(seconds * 0.5 + index * 0.4) * 0.06
+            card.mesh.rotation.x =
+              card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
+          }
         }
       } else {
+        standardStarField.rotation.y = 0
+        standardStarField.rotation.x = 0
+        standardStarField.position.z = 0
+        standardStarField.position.x = 0
+
         const activeCard =
           cards[Math.min(activeTrainIndex(), Math.max(cards.length - 1, 0))] ?? null
         const targetCameraZ = (activeCard?.basePosition.z ?? -12) + RUNNER_VIEW_OFFSET
@@ -315,8 +486,6 @@ export default function MarkdownScene(props: {
         camera.lookAt(0, 1.82, camera.position.z - (RUNNER_VIEW_OFFSET + 0.2))
         stage.rotation.y = 0
         stage.rotation.x = 0
-        starField.position.z = 0
-        starField.position.x = 0
 
         for (const card of cards) {
           const distanceFromFocus = Math.abs(card.basePosition.z - slideFocusZ)
@@ -359,10 +528,16 @@ export default function MarkdownScene(props: {
       resizeObserver.disconnect()
       host.removeEventListener('pointermove', handlePointerMove)
       host.removeEventListener('pointerleave', resetPointer)
+      host.removeEventListener('click', handleCanvasClick)
+      document.removeEventListener('keydown', handleKeyDown)
       reducedMotionQuery?.removeEventListener?.('change', handleReducedMotionChange)
       clearGroup(stage)
-      disposeRenderable(starField)
+      disposeRenderable(standardStarField)
+      disposeRenderable(cosmosStarField)
       renderer.dispose()
+      preparedCache.clear()
+      preparedCacheDocId = null
+      clearPretextCache()
       host.textContent = ''
     })
   })
@@ -370,6 +545,44 @@ export default function MarkdownScene(props: {
   return (
     <div class="scene-shell">
       <div ref={host} class="scene-canvas" />
+
+      <Show when={props.environment === 'space' && orbitFocusLabel()}>
+        <div class="orbit-focus-bar" aria-live="polite">
+          <span class="orbit-focus-label">{orbitFocusLabel()}</span>
+          <span class="orbit-focus-hint">Esc to return · arrows to navigate</span>
+        </div>
+      </Show>
+
+      <Show when={props.environment === 'cosmos' && props.documentModel.blocks.length > 0}>
+        <div class="cosmos-overlay">
+          <CosmosCard
+            block={props.documentModel.blocks[activeCosmosIndex()]}
+            blocks={props.documentModel.blocks}
+            index={activeCosmosIndex()}
+          />
+          <div class="scene-controls">
+            <button
+              type="button"
+              class="scene-next"
+              onClick={() => moveCosmosIndex(1)}
+            >
+              {activeCosmosIndex() + 1 < props.documentModel.blocks.length
+                ? 'Next'
+                : 'Restart'}
+            </button>
+            <div class="scene-progress" aria-live="polite">
+              <span class="scene-progress-current">
+                {formatSlideNumber(activeCosmosIndex() + 1)}
+              </span>
+              <span class="scene-progress-divider">/</span>
+              <span class="scene-progress-total">
+                {formatSlideNumber(props.documentModel.blocks.length)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </Show>
+
       <Show when={props.environment === 'train' && props.documentModel.blocks.length > 0}>
         <div class="scene-controls">
           <button
@@ -390,6 +603,89 @@ export default function MarkdownScene(props: {
             </span>
           </div>
         </div>
+      </Show>
+    </div>
+  )
+}
+
+function CosmosCard(props: {
+  block: BlogBlock | undefined
+  blocks: BlogBlock[]
+  index: number
+}) {
+  return (
+    <Show when={props.block} keyed>
+      {(block) => (
+        <CosmosCardInner
+          block={block}
+          contextBefore={getFormulaContext(props.blocks, props.index, -1)}
+          contextAfter={getFormulaContext(props.blocks, props.index, 1)}
+        />
+      )}
+    </Show>
+  )
+}
+
+function getFormulaContext(
+  blocks: BlogBlock[],
+  index: number,
+  direction: -1 | 1,
+): string | null {
+  const block = blocks[index]
+  if (!block || block.kind !== 'formula') return null
+  const neighbor = blocks[index + direction]
+  if (!neighbor) return null
+  if (neighbor.kind === 'paragraph' || neighbor.kind === 'heading') {
+    return neighbor.text.length > 200
+      ? neighbor.text.slice(0, 200) + '…'
+      : neighbor.text
+  }
+  return null
+}
+
+function CosmosCardInner(props: {
+  block: BlogBlock
+  contextBefore: string | null
+  contextAfter: string | null
+}) {
+  let contentRef!: HTMLDivElement
+
+  onMount(() => {
+    if (props.block.kind === 'formula') {
+      try {
+        katex.render(props.block.text, contentRef, {
+          throwOnError: false,
+          displayMode: true,
+          output: 'html',
+        })
+      } catch {
+        const code = document.createElement('code')
+        code.textContent = props.block.text
+        contentRef.appendChild(code)
+      }
+    } else {
+      contentRef.textContent = props.block.text
+    }
+  })
+
+  return (
+    <div
+      classList={{
+        'cosmos-card': true,
+        'cosmos-card-formula': props.block.kind === 'formula',
+        'cosmos-card-prose': props.block.kind !== 'formula',
+      }}
+    >
+      <div class="cosmos-card-label">{props.block.label}</div>
+      <Show when={props.contextBefore}>
+        {(text) => <div class="cosmos-card-context">{text()}</div>}
+      </Show>
+      <div class="cosmos-card-content" ref={contentRef} />
+      <Show when={props.contextAfter}>
+        {(text) => <div class="cosmos-card-context">{text()}</div>}
+      </Show>
+      <Show when={props.block.notes}>
+        {(notes) => <div class="cosmos-card-notes">{notes()}</div>}
       </Show>
     </div>
   )
@@ -482,7 +778,12 @@ function createContentCard(
     cursorY += metrics.titleLines.height + 18
   }
 
-  if (block.kind === 'code' || block.kind === 'diagram' || block.kind === 'table') {
+  if (
+    block.kind === 'code' ||
+    block.kind === 'diagram' ||
+    block.kind === 'table' ||
+    block.kind === 'formula'
+  ) {
     ctx.fillStyle = palette.codePanel
     ctx.fillRect(
       PANEL_PADDING_X - 24,
@@ -544,7 +845,7 @@ function measureCard(block: BlogBlock) {
   const bodyFont =
     block.kind === 'diagram'
       ? '500 20px "IBM Plex Mono"'
-      : block.kind === 'code' || block.kind === 'table'
+      : block.kind === 'code' || block.kind === 'table' || block.kind === 'formula'
       ? '500 24px "IBM Plex Mono"'
       : block.kind === 'quote'
         ? '500 30px "IBM Plex Sans"'
@@ -552,25 +853,26 @@ function measureCard(block: BlogBlock) {
   const bodyLineHeight =
     block.kind === 'diagram'
       ? 25
-      : block.kind === 'code' || block.kind === 'table'
+      : block.kind === 'code' || block.kind === 'table' || block.kind === 'formula'
       ? 31
       : block.kind === 'quote'
         ? 38
         : 36
 
   const titleLines = layoutWithLines(
-    prepareWithSegments(titleText, titleFont),
+    getOrPrepare(`${block.id}:title`, titleText, titleFont),
     contentWidth,
     titleLineHeight,
   )
 
   const bodyLines = layoutWithLines(
-    prepareWithSegments(block.text, bodyFont, {
+    getOrPrepare(`${block.id}:body`, block.text, bodyFont, {
       whiteSpace:
         block.kind === 'code' ||
         block.kind === 'diagram' ||
         block.kind === 'table' ||
-        block.kind === 'list'
+        block.kind === 'list' ||
+        block.kind === 'formula'
           ? 'pre-wrap'
           : 'normal',
     }),
@@ -583,7 +885,12 @@ function measureCard(block: BlogBlock) {
     120 +
     titleLines.height +
     bodyLines.height +
-    (block.kind === 'code' || block.kind === 'diagram' || block.kind === 'table' ? 60 : 28)
+    (block.kind === 'code' ||
+    block.kind === 'diagram' ||
+    block.kind === 'table' ||
+    block.kind === 'formula'
+      ? 60
+      : 28)
 
   return {
     height: Math.max(420, Math.ceil(height)),
@@ -611,6 +918,8 @@ function getCardTitle(block: BlogBlock): string {
       return block.language ? `${block.language.toUpperCase()} Diagram` : 'Diagram Module'
     case 'table':
       return 'Data Board'
+    case 'formula':
+      return 'Expression'
   }
 }
 
@@ -649,12 +958,28 @@ function arrangeSpace(cards: SceneCard[], stage: THREE.Group) {
 
 function arrangeTrain(
   cards: SceneCard[],
+  blocks: BlogBlock[],
   stage: THREE.Group,
+  palette: EnvironmentPalette,
 ) {
   let cursorZ = -12
+  let lastSection = -1
 
   for (const [index, card] of cards.entries()) {
+    const block = blocks[index]
     const kind = card.mesh.userData.kind as BlogBlock['kind']
+    const section = block?.sectionIndex ?? 0
+
+    // Extra spacing and station marker at section boundaries
+    if (section !== lastSection && lastSection >= 0) {
+      cursorZ -= 6
+      const station = createStationMarker(cursorZ + 3, palette, block)
+      stage.add(station)
+      lastSection = section
+    } else {
+      lastSection = section
+    }
+
     const lane = index % 4
     const z = cursorZ
     const x = 0
@@ -673,6 +998,86 @@ function arrangeTrain(
   }
 
   return Math.abs(cursorZ) + 38
+}
+
+function createStationMarker(
+  z: number,
+  palette: EnvironmentPalette,
+  block?: BlogBlock,
+) {
+  const group = new THREE.Group()
+
+  // Vertical post
+  const postGeometry = new THREE.BoxGeometry(0.03, 2.4, 0.03)
+  const postMaterial = new THREE.MeshStandardMaterial({
+    color: palette.accent,
+    emissive: palette.accent,
+    emissiveIntensity: 0.3,
+    metalness: 0.7,
+    roughness: 0.3,
+  })
+  const leftPost = new THREE.Mesh(postGeometry, postMaterial)
+  leftPost.position.set(-2.8, 1.2, z)
+  group.add(leftPost)
+
+  const rightPost = new THREE.Mesh(postGeometry, postMaterial)
+  rightPost.position.set(2.8, 1.2, z)
+  group.add(rightPost)
+
+  // Crossbeam
+  const beamGeometry = new THREE.BoxGeometry(5.6, 0.02, 0.02)
+  const beamMaterial = new THREE.MeshBasicMaterial({
+    color: palette.railGlow,
+    transparent: true,
+    opacity: 0.35,
+  })
+  const beam = new THREE.Mesh(beamGeometry, beamMaterial)
+  beam.position.set(0, 2.4, z)
+  group.add(beam)
+
+  // Station name label (rendered to canvas)
+  if (block?.kind === 'heading') {
+    const labelCanvas = document.createElement('canvas')
+    labelCanvas.width = 512
+    labelCanvas.height = 64
+    const ctx = labelCanvas.getContext('2d')
+    if (ctx) {
+      ctx.clearRect(0, 0, 512, 64)
+      ctx.fillStyle = palette.accent
+      ctx.font = '600 32px "IBM Plex Mono"'
+      ctx.textAlign = 'center'
+      ctx.fillText(
+        block.text.slice(0, 32).toUpperCase(),
+        256,
+        42,
+      )
+      const labelTexture = new THREE.CanvasTexture(labelCanvas)
+      labelTexture.colorSpace = THREE.SRGBColorSpace
+      const labelMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.2, 0.4),
+        new THREE.MeshBasicMaterial({
+          map: labelTexture,
+          transparent: true,
+          side: THREE.DoubleSide,
+        }),
+      )
+      labelMesh.position.set(0, 2.7, z)
+      group.add(labelMesh)
+    }
+  }
+
+  // Ground glow line
+  const glowGeometry = new THREE.BoxGeometry(5.6, 0.005, 0.06)
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: palette.railGlow,
+    transparent: true,
+    opacity: 0.2,
+  })
+  const glow = new THREE.Mesh(glowGeometry, glowMaterial)
+  glow.position.set(0, 0.01, z)
+  group.add(glow)
+
+  return group
 }
 
 function createRailWorld(trackLength: number, palette: EnvironmentPalette) {
@@ -726,6 +1131,7 @@ function getRunnerCardScale(kind: BlogBlock['kind']) {
     case 'code':
     case 'diagram':
     case 'table':
+    case 'formula':
       return 0.92
     default:
       return 1
@@ -741,6 +1147,7 @@ function getRunnerCardSpacing(kind: BlogBlock['kind']) {
     case 'code':
     case 'diagram':
     case 'table':
+    case 'formula':
       return 14.4
     default:
       return 13.6
@@ -770,6 +1177,35 @@ function createStarField(color: string) {
     transparent: true,
     opacity: 0.84,
     sizeAttenuation: true,
+  })
+
+  return new THREE.Points(geometry, material)
+}
+
+function createCosmosStarField() {
+  const count = 4000
+  const positions = new Float32Array(count * 3)
+  const R = 90
+
+  for (let i = 0; i < count; i++) {
+    const u = Math.random()
+    const v = Math.random()
+    const theta = 2 * Math.PI * u
+    const phi = Math.acos(2 * v - 1)
+    positions[i * 3] = R * Math.sin(phi) * Math.cos(theta)
+    positions[i * 3 + 1] = R * Math.sin(phi) * Math.sin(theta)
+    positions[i * 3 + 2] = R * Math.cos(phi)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+
+  const material = new THREE.PointsMaterial({
+    color: '#ffffff',
+    size: 1,
+    sizeAttenuation: false,
+    transparent: true,
+    opacity: 0.88,
   })
 
   return new THREE.Points(geometry, material)
@@ -852,7 +1288,7 @@ function hexToRgba(hex: string, alpha: number) {
 }
 
 function isBlogEnvironment(value: BlogEnvironment | null): value is BlogEnvironment {
-  return value === 'space' || value === 'train'
+  return value === 'space' || value === 'train' || value === 'cosmos'
 }
 
 function getPalette(environment: BlogEnvironment | null) {

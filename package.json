@@ -17,6 +17,7 @@
     "@tanstack/solid-router-devtools": "latest",
     "@tanstack/solid-router-ssr-query": "latest",
     "@tanstack/solid-start": "latest",
+    "katex": "^0.16.45",
     "marked": "^18.0.0",
     "solid-js": "^1.9.11",
     "three": "^0.183.2",
