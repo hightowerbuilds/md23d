@@ -246,9 +246,9 @@ function App() {
                     />
                     <EnvironmentButton
                       active={false}
-                      title="Runner"
+                      title="Drift"
                       onClick={() => {
-                        setEnvironment('train')
+                        setEnvironment('drift')
                         setStage('scene')
                       }}
                     />
@@ -311,10 +311,10 @@ function App() {
               }}
             />
             <EnvironmentButton
-              active={environment() === 'train'}
-              title="Runner"
+              active={environment() === 'drift'}
+              title="Drift"
               onClick={() => {
-                setEnvironment('train')
+                setEnvironment('drift')
                 setStage('scene')
               }}
             />

@@ -19,11 +19,11 @@ In the space mode, the article behaves like a constellation. Each section floats
 
 Click any card to focus it. Press Escape to return to the constellation. Arrow keys cycle between cards.
 
-## Environment Two: Rail Runner
+## Environment Two: Drift
 
-The train mode changes the reading posture. Instead of hovering, the reader moves forward. The camera advances down the track and the article reveals itself as signboards, station prompts, and broadcast frames appearing beside the route.
+In drift mode, your content is alive. Eight thousand particles form the text of each slide — readable, glowing, breathing. Grab the slide and drag to spin it. The particles scatter into a cloud, then reconverge as the next section materializes from the fog.
 
-Headings act as stations — visual landmarks that break the journey into chapters.
+The effect is pointillist — every word is made of light.
 
 ---
 

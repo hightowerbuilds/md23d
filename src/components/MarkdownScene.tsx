@@ -20,8 +20,11 @@ const PANEL_PIXEL_WIDTH = 980
 const PANEL_WORLD_WIDTH = 4.6
 const PANEL_PADDING_X = 72
 const PANEL_PADDING_Y = 60
-const RUNNER_VIEW_OFFSET = 5.8
-const RUNNER_BASE_SCALE = 1.72
+const DRIFT_PARTICLE_COUNT = 8000
+const DRIFT_WORLD_WIDTH = 6.2
+const DRIFT_SAMPLE_STEP = 3
+const DRIFT_DISSOLVE_SPEED = 0.018
+const DRIFT_FORM_SPEED = 0.022
 
 // Pretext measurement cache — survives across environment switches for the same document
 const preparedCache = new Map<string, PreparedTextWithSegments>()
@@ -52,6 +55,12 @@ type SceneCard = {
   basePosition: THREE.Vector3
   baseRotation: THREE.Euler
   baseScale: THREE.Vector3
+}
+
+type DriftSlideData = {
+  textPositions: Float32Array
+  textColors: Float32Array
+  textCount: number
 }
 
 type EnvironmentPalette = {
@@ -92,23 +101,23 @@ const palettes: Record<BlogEnvironment, EnvironmentPalette> = {
     railGlow: '#63d6ff',
     floor: '#08111d',
   },
-  train: {
-    sceneBackground: '#02050d',
-    fog: '#060a13',
-    star: '#ffd8ae',
-    rim: '#ff8b4a',
-    panel: 'rgba(24, 13, 14, 0.94)',
-    panelSoft: 'rgba(46, 23, 25, 0.72)',
-    border: 'rgba(255, 147, 84, 0.42)',
-    text: '#fff3e9',
-    textSoft: '#d7b7a0',
-    accent: '#ff9d5d',
-    accentSecondary: '#ffd36d',
-    codePanel: 'rgba(18, 10, 8, 0.96)',
-    codeText: '#ffd2ad',
-    rail: '#4d8d67',
-    railGlow: '#7db28b',
-    floor: '#0b0706',
+  drift: {
+    sceneBackground: '#020408',
+    fog: '#020408',
+    star: '#6e9eff',
+    rim: '#3355aa',
+    panel: 'rgba(8, 14, 28, 0.95)',
+    panelSoft: 'rgba(12, 20, 40, 0.8)',
+    border: 'rgba(90, 140, 240, 0.28)',
+    text: '#d8e4ff',
+    textSoft: '#7898c0',
+    accent: '#5b8def',
+    accentSecondary: '#8cb4ff',
+    codePanel: 'rgba(4, 8, 18, 0.97)',
+    codeText: '#8cb4ff',
+    rail: '#1a2a4a',
+    railGlow: '#4488cc',
+    floor: '#010306',
   },
   cosmos: {
     sceneBackground: '#000000',
@@ -136,15 +145,9 @@ export default function MarkdownScene(props: {
 }) {
   let host!: HTMLDivElement
 
-  const [activeTrainIndex, setActiveTrainIndex] = createSignal(0)
-  const moveTrainIndex = (direction: 1 | -1) => {
-    setActiveTrainIndex((index) => {
-      const total = props.documentModel.blocks.length
-      if (total <= 0) return 0
-      if (direction > 0) return index + 1 < total ? index + 1 : 0
-      return index > 0 ? index - 1 : total - 1
-    })
-  }
+  const [activeDriftIndex, setActiveDriftIndex] = createSignal(0)
+  const [driftLabel, setDriftLabel] = createSignal('')
+  let triggerDriftTransitionRef: ((dir?: 1 | -1) => void) | null = null
 
   const [activeCosmosIndex, setActiveCosmosIndex] = createSignal(0)
   const [orbitFocusLabel, setOrbitFocusLabel] = createSignal<string | null>(null)
@@ -160,7 +163,7 @@ export default function MarkdownScene(props: {
   createEffect(() => {
     props.documentModel
     props.environment
-    setActiveTrainIndex(0)
+    setActiveDriftIndex(0)
     setActiveCosmosIndex(0)
   })
 
@@ -169,43 +172,39 @@ export default function MarkdownScene(props: {
       {
         hotkey: 'ArrowRight',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) return
+          if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          if (props.environment === 'train') moveTrainIndex(1)
-          else moveCosmosIndex(1)
+          moveCosmosIndex(1)
         },
       },
       {
         hotkey: 'Enter',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) return
+          if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          if (props.environment === 'train') moveTrainIndex(1)
-          else moveCosmosIndex(1)
+          moveCosmosIndex(1)
         },
       },
       {
         hotkey: 'Space',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) return
+          if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          if (props.environment === 'train') moveTrainIndex(1)
-          else moveCosmosIndex(1)
+          moveCosmosIndex(1)
         },
       },
       {
         hotkey: 'ArrowLeft',
         callback: (event) => {
-          if (!shouldHandleRunnerHotkey(event)) return
+          if (!shouldHandleSceneHotkey(event)) return
           event.preventDefault()
-          if (props.environment === 'train') moveTrainIndex(-1)
-          else moveCosmosIndex(-1)
+          moveCosmosIndex(-1)
         },
       },
     ],
     () => ({
       enabled:
-        (props.environment === 'train' || props.environment === 'cosmos') &&
+        props.environment === 'cosmos' &&
         props.documentModel.blocks.length > 0,
       ignoreInputs: true,
       preventDefault: false,
@@ -254,13 +253,36 @@ export default function MarkdownScene(props: {
     const raycaster = new THREE.Raycaster()
     const clickNdc = new THREE.Vector2()
     let cards: SceneCard[] = []
-    let trackLength = 72
     let frameId = 0
     let currentEnvironment = props.environment
     let reduceMotion = reducedMotionQuery?.matches ?? false
     let focusedCardIndex: number | null = null
     let focusTarget = new THREE.Vector3()
     let focusLookAt = new THREE.Vector3()
+
+    // Drift state
+    let driftSlides: DriftSlideData[] = []
+    let driftGeometry: THREE.BufferGeometry | null = null
+    let driftPoints: THREE.Points | null = null
+    let driftGroup = new THREE.Group()
+    let driftCloudPositions = new Float32Array(DRIFT_PARTICLE_COUNT * 3)
+    let driftState: 'idle' | 'dissolving' | 'forming' = 'forming'
+    let driftProgress = 0
+    let driftSpinVelocity = 0
+    let isDriftDragging = false
+    let driftDragStartX = 0
+    let driftDragDelta = 0
+    const orbSprite = createOrbSprite()
+
+    // Pre-generate cloud positions
+    for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const r = 2.5 + Math.random() * 4
+      driftCloudPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+      driftCloudPositions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.6
+      driftCloudPositions[i * 3 + 2] = r * Math.cos(phi) * 0.8
+    }
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0]
@@ -345,9 +367,55 @@ export default function MarkdownScene(props: {
       }
     }
 
+    const triggerDriftTransition = (direction: 1 | -1 = 1) => {
+      if (driftState !== 'idle' || driftSlides.length === 0) return
+      driftState = 'dissolving'
+      driftProgress = 0
+      const total = driftSlides.length
+      const nextIndex =
+        direction > 0
+          ? (activeDriftIndex() + 1) % total
+          : (activeDriftIndex() - 1 + total) % total
+      setActiveDriftIndex(nextIndex)
+      const block = props.documentModel.blocks[nextIndex]
+      setDriftLabel(block ? block.label : '')
+    }
+    triggerDriftTransitionRef = triggerDriftTransition
+
+    const handleDriftPointerDown = (event: PointerEvent) => {
+      if (currentEnvironment !== 'drift') return
+      isDriftDragging = true
+      driftDragStartX = event.clientX
+      driftDragDelta = 0
+      host.setPointerCapture(event.pointerId)
+    }
+
+    const handleDriftPointerMove = (event: PointerEvent) => {
+      if (!isDriftDragging || currentEnvironment !== 'drift') return
+      driftDragDelta = event.clientX - driftDragStartX
+      driftSpinVelocity = driftDragDelta * 0.0015
+      if (driftState === 'idle') {
+        driftGroup.rotation.y = driftDragDelta * 0.004
+      }
+    }
+
+    const handleDriftPointerUp = () => {
+      if (!isDriftDragging) return
+      isDriftDragging = false
+      if (Math.abs(driftDragDelta) > 50 && driftState === 'idle') {
+        triggerDriftTransition(driftDragDelta > 0 ? 1 : -1)
+      } else if (driftState === 'idle') {
+        driftGroup.rotation.y = 0
+      }
+      driftDragDelta = 0
+    }
+
     host.addEventListener('pointermove', handlePointerMove)
     host.addEventListener('pointerleave', resetPointer)
     host.addEventListener('click', handleCanvasClick)
+    host.addEventListener('pointerdown', handleDriftPointerDown)
+    host.addEventListener('pointermove', handleDriftPointerMove)
+    host.addEventListener('pointerup', handleDriftPointerUp)
     document.addEventListener('keydown', handleKeyDown)
 
     const handleReducedMotionChange = (event: MediaQueryListEvent) => {
@@ -360,9 +428,18 @@ export default function MarkdownScene(props: {
       if (!isBlogEnvironment(props.environment)) return
 
       currentEnvironment = props.environment
-      trackLength = 72
       focusedCardIndex = null
       clearGroup(stage)
+
+      // Clean up previous drift resources
+      if (driftPoints) {
+        driftGroup.remove(driftPoints)
+        driftGeometry?.dispose()
+        driftPoints = null
+        driftGeometry = null
+      }
+      scene.remove(driftGroup)
+      driftGroup = new THREE.Group()
 
       const docId = props.documentModel.blocks.map((b) => b.id).join(':')
       invalidatePreparedCache(docId)
@@ -378,17 +455,82 @@ export default function MarkdownScene(props: {
         camera.position.set(0, 0, 0.1)
         camera.lookAt(0, 0.05, -1)
         cards = []
+        driftSlides = []
         return
       }
 
+      if (currentEnvironment === 'drift') {
+        scene.fog = new THREE.Fog(palette.fog, 8, 28)
+        standardStarField.visible = true
+        cosmosStarField.visible = false
+        fillLight.visible = true
+        fillLight.color.set(palette.accent)
+        fillLight.intensity = 12
+        ;(standardStarField.material as THREE.PointsMaterial).color.set(palette.star)
+        standardStarField.position.set(0, 0, 0)
+
+        camera.position.set(0, 0, 7)
+        camera.lookAt(0, 0, 0)
+        cards = []
+
+        // Build particle slides from document blocks
+        driftSlides = props.documentModel.blocks.map((block) =>
+          buildDriftSlide(block, palette),
+        )
+
+        // Create the particle geometry
+        driftGeometry = new THREE.BufferGeometry()
+        const positions = new Float32Array(DRIFT_PARTICLE_COUNT * 3)
+        const colors = new Float32Array(DRIFT_PARTICLE_COUNT * 3)
+
+        // Start in cloud
+        for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
+          positions[i * 3] = driftCloudPositions[i * 3]!
+          positions[i * 3 + 1] = driftCloudPositions[i * 3 + 1]!
+          positions[i * 3 + 2] = driftCloudPositions[i * 3 + 2]!
+          colors[i * 3] = 0.25
+          colors[i * 3 + 1] = 0.35
+          colors[i * 3 + 2] = 0.55
+        }
+
+        driftGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+        driftGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+
+        const material = new THREE.PointsMaterial({
+          size: 0.045,
+          sizeAttenuation: true,
+          transparent: true,
+          opacity: 0.88,
+          vertexColors: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          map: orbSprite,
+        })
+
+        driftPoints = new THREE.Points(driftGeometry, material)
+        driftGroup.add(driftPoints)
+        scene.add(driftGroup)
+
+        // Begin forming first slide
+        driftState = 'forming'
+        driftProgress = 0
+        driftSpinVelocity = 0
+        setActiveDriftIndex(0)
+        const firstBlock = props.documentModel.blocks[0]
+        setDriftLabel(firstBlock ? firstBlock.label : '')
+        return
+      }
+
+      // Space environment
       standardStarField.visible = true
       cosmosStarField.visible = false
       fillLight.visible = true
-      scene.fog = new THREE.Fog(palette.fog, 14, currentEnvironment === 'space' ? 72 : 84)
+      scene.fog = new THREE.Fog(palette.fog, 14, 72)
       ;(standardStarField.material as THREE.PointsMaterial).color.set(palette.star)
       standardStarField.position.set(0, 0, 0)
       fillLight.color.set(palette.accent)
-      fillLight.intensity = currentEnvironment === 'space' ? 20 : 13
+      fillLight.intensity = 20
+      driftSlides = []
 
       cards = props.documentModel.blocks.map((block, index) =>
         createContentCard(
@@ -399,13 +541,8 @@ export default function MarkdownScene(props: {
         ),
       )
 
-      if (currentEnvironment === 'space') {
-        arrangeSpace(cards, stage)
-        stage.add(createNebulaRing(palette))
-      } else {
-        trackLength = arrangeTrain(cards, props.documentModel.blocks, stage, palette)
-        stage.add(createRailWorld(trackLength, palette))
-      }
+      arrangeSpace(cards, stage)
+      stage.add(createNebulaRing(palette))
     }
 
     const animate = (time: number) => {
@@ -468,46 +605,118 @@ export default function MarkdownScene(props: {
               card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
           }
         }
-      } else {
-        standardStarField.rotation.y = 0
-        standardStarField.rotation.x = 0
-        standardStarField.position.z = 0
-        standardStarField.position.x = 0
+      } else if (currentEnvironment === 'drift') {
+        standardStarField.rotation.y += 0.00015
+        standardStarField.rotation.x = Math.sin(seconds * 0.05) * 0.03
 
-        const activeCard =
-          cards[Math.min(activeTrainIndex(), Math.max(cards.length - 1, 0))] ?? null
-        const targetCameraZ = (activeCard?.basePosition.z ?? -12) + RUNNER_VIEW_OFFSET
-        const slideFocusZ = camera.position.z - RUNNER_VIEW_OFFSET
+        // Gentle camera parallax
+        camera.position.x += (pointer.x * 0.6 - camera.position.x) * 0.02
+        camera.position.y += (pointer.y * -0.3 - camera.position.y) * 0.02
+        camera.position.z += (7 - camera.position.z) * 0.03
+        camera.lookAt(0, 0, 0)
 
-        camera.position.x += (0 - camera.position.x) * 0.14
-        camera.position.y += (1.82 - camera.position.y) * 0.14
-        camera.position.z +=
-          (targetCameraZ - camera.position.z) * (reduceMotion ? 0.12 : 0.16)
-        camera.lookAt(0, 1.82, camera.position.z - (RUNNER_VIEW_OFFSET + 0.2))
-        stage.rotation.y = 0
-        stage.rotation.x = 0
+        if (driftGeometry && driftSlides.length > 0) {
+          const posAttr = driftGeometry.attributes.position!
+          const colAttr = driftGeometry.attributes.color!
+          const positions = posAttr.array as Float32Array
+          const colors = colAttr.array as Float32Array
+          const slide = driftSlides[activeDriftIndex()]!
+          const lerpSpeed = reduceMotion ? 0.08 : 0.045
 
-        for (const card of cards) {
-          const distanceFromFocus = Math.abs(card.basePosition.z - slideFocusZ)
-          const focus = THREE.MathUtils.clamp(1 - distanceFromFocus / 14, 0, 1)
-          const passthrough = THREE.MathUtils.clamp(
-            1 - Math.abs(card.basePosition.z - camera.position.z) / 1.5,
-            0,
-            1,
-          )
+          if (driftState === 'forming') {
+            driftProgress += DRIFT_FORM_SPEED
+            if (driftProgress >= 1) {
+              driftState = 'idle'
+              driftProgress = 1
+            }
+            driftGroup.rotation.y += (0 - driftGroup.rotation.y) * 0.04
 
-          card.mesh.position.x = card.basePosition.x
-          card.mesh.position.y = card.basePosition.y + focus * 0.04
-          card.mesh.rotation.y = card.baseRotation.y
-          card.mesh.rotation.x = card.baseRotation.x
-          card.mesh.scale.setScalar(
-            card.baseScale.x * (1 + focus * (reduceMotion ? 0.025 : 0.04)),
-          )
-          card.mesh.material.opacity = THREE.MathUtils.clamp(
-            0.08 + focus * 0.92 - passthrough * 0.72,
-            0,
-            1,
-          )
+            for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
+              const i3 = i * 3
+              if (i < slide.textCount) {
+                positions[i3]! += (slide.textPositions[i3]! - positions[i3]!) * lerpSpeed
+                positions[i3 + 1]! +=
+                  (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * lerpSpeed
+                positions[i3 + 2]! +=
+                  (slide.textPositions[i3 + 2]! - positions[i3 + 2]!) * lerpSpeed
+                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * lerpSpeed
+                colors[i3 + 1]! +=
+                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * lerpSpeed
+                colors[i3 + 2]! +=
+                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * lerpSpeed
+              } else {
+                // Ambient cloud particles
+                positions[i3]! +=
+                  (driftCloudPositions[i3]! - positions[i3]!) * 0.008
+                positions[i3 + 1]! +=
+                  (driftCloudPositions[i3 + 1]! - positions[i3 + 1]!) * 0.008
+                positions[i3 + 2]! +=
+                  (driftCloudPositions[i3 + 2]! - positions[i3 + 2]!) * 0.008
+                positions[i3]! += Math.sin(seconds * 0.15 + i) * 0.002
+                positions[i3 + 1]! += Math.cos(seconds * 0.12 + i * 0.7) * 0.002
+                colors[i3]! += (0.15 - colors[i3]!) * 0.02
+                colors[i3 + 1]! += (0.2 - colors[i3 + 1]!) * 0.02
+                colors[i3 + 2]! += (0.35 - colors[i3 + 2]!) * 0.02
+              }
+            }
+          } else if (driftState === 'dissolving') {
+            driftProgress += DRIFT_DISSOLVE_SPEED
+            if (driftProgress >= 1) {
+              driftState = 'forming'
+              driftProgress = 0
+            }
+
+            // Spin during dissolve
+            if (!isDriftDragging) {
+              driftGroup.rotation.y += driftSpinVelocity
+              driftSpinVelocity *= 0.985
+            }
+
+            // Scatter all particles to cloud
+            for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
+              const i3 = i * 3
+              const speed = 0.025 + (i % 7) * 0.005
+              positions[i3]! += (driftCloudPositions[i3]! - positions[i3]!) * speed
+              positions[i3 + 1]! +=
+                (driftCloudPositions[i3 + 1]! - positions[i3 + 1]!) * speed
+              positions[i3 + 2]! +=
+                (driftCloudPositions[i3 + 2]! - positions[i3 + 2]!) * speed
+              // Fade to ambient color
+              colors[i3]! += (0.2 - colors[i3]!) * 0.03
+              colors[i3 + 1]! += (0.28 - colors[i3 + 1]!) * 0.03
+              colors[i3 + 2]! += (0.5 - colors[i3 + 2]!) * 0.03
+            }
+          } else {
+            // Idle — subtle breathing
+            if (!isDriftDragging) {
+              driftGroup.rotation.y += (0 - driftGroup.rotation.y) * 0.03
+            }
+
+            for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
+              const i3 = i * 3
+              if (i < slide.textCount) {
+                positions[i3]! +=
+                  (slide.textPositions[i3]! - positions[i3]!) * 0.06
+                positions[i3 + 1]! +=
+                  (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * 0.06
+                positions[i3 + 2]! =
+                  slide.textPositions[i3 + 2]! +
+                  Math.sin(seconds * 0.4 + i * 0.008) * 0.015
+                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * 0.04
+                colors[i3 + 1]! +=
+                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * 0.04
+                colors[i3 + 2]! +=
+                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * 0.04
+              } else {
+                positions[i3]! += Math.sin(seconds * 0.2 + i) * 0.001
+                positions[i3 + 1]! += Math.cos(seconds * 0.15 + i * 0.7) * 0.001
+                positions[i3 + 2]! += Math.sin(seconds * 0.25 + i * 1.3) * 0.001
+              }
+            }
+          }
+
+          posAttr.needsUpdate = true
+          colAttr.needsUpdate = true
         }
       }
 
@@ -529,6 +738,8 @@ export default function MarkdownScene(props: {
       host.removeEventListener('pointermove', handlePointerMove)
       host.removeEventListener('pointerleave', resetPointer)
       host.removeEventListener('click', handleCanvasClick)
+      host.removeEventListener('pointerdown', handleDriftPointerDown)
+      host.removeEventListener('pointerup', handleDriftPointerUp)
       document.removeEventListener('keydown', handleKeyDown)
       reducedMotionQuery?.removeEventListener?.('change', handleReducedMotionChange)
       clearGroup(stage)
@@ -583,25 +794,31 @@ export default function MarkdownScene(props: {
         </div>
       </Show>
 
-      <Show when={props.environment === 'train' && props.documentModel.blocks.length > 0}>
-        <div class="scene-controls">
-          <button
-            type="button"
-            class="scene-next"
-            onClick={() => moveTrainIndex(1)}
-          >
-            {activeTrainIndex() + 1 < props.documentModel.blocks.length ? 'Next' : 'Restart'}
-          </button>
+      <Show when={props.environment === 'drift' && props.documentModel.blocks.length > 0}>
+        <div class="drift-overlay">
+          <div class="drift-label" aria-live="polite">{driftLabel()}</div>
+          <div class="scene-controls">
+            <button
+              type="button"
+              class="scene-next"
+              onClick={() => triggerDriftTransitionRef?.(1)}
+            >
+              {activeDriftIndex() + 1 < props.documentModel.blocks.length
+                ? 'Next'
+                : 'Restart'}
+            </button>
 
-          <div class="scene-progress" aria-live="polite">
-            <span class="scene-progress-current">
-              {formatSlideNumber(activeTrainIndex() + 1)}
-            </span>
-            <span class="scene-progress-divider">/</span>
-            <span class="scene-progress-total">
-              {formatSlideNumber(props.documentModel.blocks.length)}
-            </span>
+            <div class="scene-progress" aria-live="polite">
+              <span class="scene-progress-current">
+                {formatSlideNumber(activeDriftIndex() + 1)}
+              </span>
+              <span class="scene-progress-divider">/</span>
+              <span class="scene-progress-total">
+                {formatSlideNumber(props.documentModel.blocks.length)}
+              </span>
+            </div>
           </div>
+          <div class="drift-hint">Drag to spin · release to advance</div>
         </div>
       </Show>
     </div>
@@ -691,7 +908,7 @@ function CosmosCardInner(props: {
   )
 }
 
-function shouldHandleRunnerHotkey(event: KeyboardEvent) {
+function shouldHandleSceneHotkey(event: KeyboardEvent) {
   if (
     event.defaultPrevented ||
     event.metaKey ||
@@ -818,7 +1035,7 @@ function createContentCard(
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
-    side: environment === 'train' ? THREE.DoubleSide : THREE.FrontSide,
+    side: THREE.FrontSide,
   })
 
   const aspect = canvas.height / canvas.width
@@ -956,202 +1173,139 @@ function arrangeSpace(cards: SceneCard[], stage: THREE.Group) {
   }
 }
 
-function arrangeTrain(
-  cards: SceneCard[],
-  blocks: BlogBlock[],
-  stage: THREE.Group,
+function buildDriftSlide(
+  block: BlogBlock,
   palette: EnvironmentPalette,
-) {
-  let cursorZ = -12
-  let lastSection = -1
+): DriftSlideData {
+  const metrics = measureCard(block)
+  const canvas = document.createElement('canvas')
+  canvas.width = PANEL_PIXEL_WIDTH
+  canvas.height = metrics.height
+  const ctx = canvas.getContext('2d')!
 
-  for (const [index, card] of cards.entries()) {
-    const block = blocks[index]
-    const kind = card.mesh.userData.kind as BlogBlock['kind']
-    const section = block?.sectionIndex ?? 0
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // Extra spacing and station marker at section boundaries
-    if (section !== lastSection && lastSection >= 0) {
-      cursorZ -= 6
-      const station = createStationMarker(cursorZ + 3, palette, block)
-      stage.add(station)
-      lastSection = section
-    } else {
-      lastSection = section
-    }
+  // Label
+  ctx.fillStyle = palette.accent
+  ctx.font = '600 20px "IBM Plex Sans"'
+  ctx.fillText(block.label.toUpperCase(), PANEL_PADDING_X, 88)
 
-    const lane = index % 4
-    const z = cursorZ
-    const x = 0
-    const y = 1.78 + (lane === 0 ? 0.18 : lane === 1 ? 0.04 : lane === 2 ? 0.12 : -0.02)
-    const scale = getRunnerCardScale(kind) * RUNNER_BASE_SCALE
-
-    card.mesh.position.set(x, y, z)
-    card.mesh.rotation.set(0.003, 0, 0)
-    card.mesh.scale.setScalar(scale)
-    card.basePosition.copy(card.mesh.position)
-    card.baseRotation.copy(card.mesh.rotation)
-    card.baseScale.copy(card.mesh.scale)
-    stage.add(card.mesh)
-
-    cursorZ -= getRunnerCardSpacing(kind)
+  // Title
+  let cursorY = 148
+  if (block.kind === 'heading') {
+    ctx.fillStyle = palette.text
+    ctx.font = '700 46px "Space Grotesk"'
+    drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
+    cursorY += metrics.titleLines.height + 28
+  } else {
+    ctx.fillStyle = palette.text
+    ctx.font = '700 30px "Space Grotesk"'
+    drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
+    cursorY += metrics.titleLines.height + 18
   }
 
-  return Math.abs(cursorZ) + 38
+  // Body
+  if (
+    block.kind === 'code' ||
+    block.kind === 'diagram' ||
+    block.kind === 'table' ||
+    block.kind === 'formula'
+  ) {
+    ctx.fillStyle = palette.codeText
+  } else {
+    ctx.fillStyle = palette.text
+  }
+  ctx.font = metrics.bodyFont
+  drawLayoutLines(
+    ctx,
+    metrics.bodyLines,
+    PANEL_PADDING_X,
+    cursorY + metrics.bodyLineHeight * 0.9,
+    metrics.bodyLineHeight,
+  )
+
+  return sampleCanvasToParticles(canvas)
 }
 
-function createStationMarker(
-  z: number,
-  palette: EnvironmentPalette,
-  block?: BlogBlock,
-) {
-  const group = new THREE.Group()
+function sampleCanvasToParticles(canvas: HTMLCanvasElement): DriftSlideData {
+  const ctx = canvas.getContext('2d')!
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const { data, width, height } = imageData
+  const aspect = height / width
+  const worldHeight = DRIFT_WORLD_WIDTH * aspect
 
-  // Vertical post
-  const postGeometry = new THREE.BoxGeometry(0.03, 2.4, 0.03)
-  const postMaterial = new THREE.MeshStandardMaterial({
-    color: palette.accent,
-    emissive: palette.accent,
-    emissiveIntensity: 0.3,
-    metalness: 0.7,
-    roughness: 0.3,
-  })
-  const leftPost = new THREE.Mesh(postGeometry, postMaterial)
-  leftPost.position.set(-2.8, 1.2, z)
-  group.add(leftPost)
+  const candidates: Array<{
+    x: number; y: number; z: number
+    r: number; g: number; b: number
+  }> = []
 
-  const rightPost = new THREE.Mesh(postGeometry, postMaterial)
-  rightPost.position.set(2.8, 1.2, z)
-  group.add(rightPost)
-
-  // Crossbeam
-  const beamGeometry = new THREE.BoxGeometry(5.6, 0.02, 0.02)
-  const beamMaterial = new THREE.MeshBasicMaterial({
-    color: palette.railGlow,
-    transparent: true,
-    opacity: 0.35,
-  })
-  const beam = new THREE.Mesh(beamGeometry, beamMaterial)
-  beam.position.set(0, 2.4, z)
-  group.add(beam)
-
-  // Station name label (rendered to canvas)
-  if (block?.kind === 'heading') {
-    const labelCanvas = document.createElement('canvas')
-    labelCanvas.width = 512
-    labelCanvas.height = 64
-    const ctx = labelCanvas.getContext('2d')
-    if (ctx) {
-      ctx.clearRect(0, 0, 512, 64)
-      ctx.fillStyle = palette.accent
-      ctx.font = '600 32px "IBM Plex Mono"'
-      ctx.textAlign = 'center'
-      ctx.fillText(
-        block.text.slice(0, 32).toUpperCase(),
-        256,
-        42,
-      )
-      const labelTexture = new THREE.CanvasTexture(labelCanvas)
-      labelTexture.colorSpace = THREE.SRGBColorSpace
-      const labelMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(3.2, 0.4),
-        new THREE.MeshBasicMaterial({
-          map: labelTexture,
-          transparent: true,
-          side: THREE.DoubleSide,
-        }),
-      )
-      labelMesh.position.set(0, 2.7, z)
-      group.add(labelMesh)
+  for (let py = 0; py < height; py += DRIFT_SAMPLE_STEP) {
+    for (let px = 0; px < width; px += DRIFT_SAMPLE_STEP) {
+      const i = (py * width + px) * 4
+      if (data[i + 3]! > 40) {
+        candidates.push({
+          x: (px / width - 0.5) * DRIFT_WORLD_WIDTH,
+          y: -(py / height - 0.5) * worldHeight,
+          z: (Math.random() - 0.5) * 0.12,
+          r: data[i]! / 255,
+          g: data[i + 1]! / 255,
+          b: data[i + 2]! / 255,
+        })
+      }
     }
   }
 
-  // Ground glow line
-  const glowGeometry = new THREE.BoxGeometry(5.6, 0.005, 0.06)
-  const glowMaterial = new THREE.MeshBasicMaterial({
-    color: palette.railGlow,
-    transparent: true,
-    opacity: 0.2,
-  })
-  const glow = new THREE.Mesh(glowGeometry, glowMaterial)
-  glow.position.set(0, 0.01, z)
-  group.add(glow)
-
-  return group
-}
-
-function createRailWorld(trackLength: number, palette: EnvironmentPalette) {
-  const world = new THREE.Group()
-  const centerZ = -(trackLength - 16) / 2
-  const railMaterial = new THREE.MeshStandardMaterial({
-    color: palette.rail,
-    emissive: palette.railGlow,
-    emissiveIntensity: 0.05,
-    metalness: 0.68,
-    roughness: 0.46,
-  })
-  const glowMaterial = new THREE.MeshBasicMaterial({
-    color: palette.railGlow,
-    transparent: true,
-    opacity: 0.16,
-  })
-
-  const railGeometry = new THREE.BoxGeometry(0.02, 0.02, trackLength + 18)
-  const leftRail = new THREE.Mesh(railGeometry, railMaterial)
-  leftRail.position.set(-0.82, 0.02, centerZ)
-  world.add(leftRail)
-
-  const rightRail = new THREE.Mesh(railGeometry, railMaterial)
-  rightRail.position.set(0.82, 0.02, centerZ)
-  world.add(rightRail)
-
-  const leftRailGlow = new THREE.Mesh(
-    new THREE.BoxGeometry(0.008, 0.008, trackLength + 18),
-    glowMaterial,
-  )
-  leftRailGlow.position.set(-0.82, 0.09, centerZ)
-  world.add(leftRailGlow)
-
-  const rightRailGlow = new THREE.Mesh(
-    new THREE.BoxGeometry(0.008, 0.008, trackLength + 18),
-    glowMaterial,
-  )
-  rightRailGlow.position.set(0.82, 0.09, centerZ)
-  world.add(rightRailGlow)
-
-  return world
-}
-
-function getRunnerCardScale(kind: BlogBlock['kind']) {
-  switch (kind) {
-    case 'heading':
-      return 1.16
-    case 'quote':
-      return 1.08
-    case 'code':
-    case 'diagram':
-    case 'table':
-    case 'formula':
-      return 0.92
-    default:
-      return 1
+  // Shuffle
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!]
   }
+
+  const textCount = Math.min(candidates.length, DRIFT_PARTICLE_COUNT)
+  const textPositions = new Float32Array(DRIFT_PARTICLE_COUNT * 3)
+  const textColors = new Float32Array(DRIFT_PARTICLE_COUNT * 3)
+
+  for (let i = 0; i < textCount; i++) {
+    const c = candidates[i]!
+    textPositions[i * 3] = c.x
+    textPositions[i * 3 + 1] = c.y
+    textPositions[i * 3 + 2] = c.z
+    textColors[i * 3] = c.r
+    textColors[i * 3 + 1] = c.g
+    textColors[i * 3 + 2] = c.b
+  }
+
+  // Remaining particles go to ambient cloud
+  for (let i = textCount; i < DRIFT_PARTICLE_COUNT; i++) {
+    const theta = Math.random() * Math.PI * 2
+    const phi = Math.acos(2 * Math.random() - 1)
+    const r = 2 + Math.random() * 3.5
+    textPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+    textPositions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.5
+    textPositions[i * 3 + 2] = r * Math.cos(phi) * 0.6
+    textColors[i * 3] = 0.15
+    textColors[i * 3 + 1] = 0.22
+    textColors[i * 3 + 2] = 0.4
+  }
+
+  return { textPositions, textColors, textCount }
 }
 
-function getRunnerCardSpacing(kind: BlogBlock['kind']) {
-  switch (kind) {
-    case 'heading':
-      return 16.8
-    case 'quote':
-      return 15
-    case 'code':
-    case 'diagram':
-    case 'table':
-    case 'formula':
-      return 14.4
-    default:
-      return 13.6
-  }
+function createOrbSprite() {
+  const size = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const center = size / 2
+  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center)
+  gradient.addColorStop(0, 'rgba(255,255,255,1)')
+  gradient.addColorStop(0.15, 'rgba(255,255,255,0.85)')
+  gradient.addColorStop(0.45, 'rgba(255,255,255,0.25)')
+  gradient.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, size, size)
+  return new THREE.CanvasTexture(canvas)
 }
 
 function formatSlideNumber(value: number) {
@@ -1288,7 +1442,7 @@ function hexToRgba(hex: string, alpha: number) {
 }
 
 function isBlogEnvironment(value: BlogEnvironment | null): value is BlogEnvironment {
-  return value === 'space' || value === 'train' || value === 'cosmos'
+  return value === 'space' || value === 'drift' || value === 'cosmos'
 }
 
 function getPalette(environment: BlogEnvironment | null) {

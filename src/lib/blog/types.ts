@@ -1,4 +1,4 @@
-export type BlogEnvironment = 'space' | 'train' | 'cosmos'
+export type BlogEnvironment = 'space' | 'drift' | 'cosmos'
 
 export type BlogBlockKind =
   | 'heading'
