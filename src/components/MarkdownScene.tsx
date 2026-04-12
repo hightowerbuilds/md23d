@@ -21,7 +21,7 @@ const PANEL_WORLD_WIDTH = 4.6
 const PANEL_PADDING_X = 72
 const PANEL_PADDING_Y = 60
 const DRIFT_PARTICLE_COUNT = 8000
-const DRIFT_WORLD_WIDTH = 6.2
+const DRIFT_WORLD_WIDTH = 5.0
 const DRIFT_SAMPLE_STEP = 3
 const DRIFT_DISSOLVE_SPEED = 0.018
 const DRIFT_FORM_SPEED = 0.022
@@ -473,7 +473,7 @@ export default function MarkdownScene(props: {
         ;(standardStarField.material as THREE.PointsMaterial).color.set(palette.star)
         standardStarField.position.set(0, 0, 0)
 
-        camera.position.set(0, 0, 7)
+        camera.position.set(0, 0, 4.8)
         camera.lookAt(0, 0, 0)
         cards = []
 
@@ -614,12 +614,12 @@ export default function MarkdownScene(props: {
         standardStarField.rotation.x = Math.sin(seconds * 0.05) * 0.03
 
         // Camera dynamics — pulls back during dissolve, pushes in during form
-        const cameraRestZ = 7
+        const cameraRestZ = 4.8
         const cameraTargetZ =
           driftState === 'dissolving'
-            ? cameraRestZ + 1.8 * driftProgress
+            ? cameraRestZ + 1.4 * driftProgress
             : driftState === 'forming'
-              ? cameraRestZ + 1.8 * (1 - driftProgress)
+              ? cameraRestZ + 1.4 * (1 - driftProgress)
               : cameraRestZ
         camera.position.x += (pointer.x * 0.8 - camera.position.x) * 0.025
         camera.position.y += (pointer.y * -0.4 - camera.position.y) * 0.025
