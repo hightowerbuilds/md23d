@@ -268,6 +268,8 @@ export default function MarkdownScene(props: {
     let driftSlides: DriftSlideData[] = []
     let driftGeometry: THREE.BufferGeometry | null = null
     let driftPoints: THREE.Points | null = null
+    let driftCards: THREE.Mesh[] = []
+    let driftActiveCardIndex = -1
     let driftGroup = new THREE.Group()
     let driftCloudPositions = new Float32Array(DRIFT_PARTICLE_COUNT * 3)
     let driftState: 'idle' | 'dissolving' | 'forming' = 'forming'
@@ -442,6 +444,12 @@ export default function MarkdownScene(props: {
         driftPoints = null
         driftGeometry = null
       }
+      for (const card of driftCards) {
+        disposeRenderable(card)
+        driftGroup.remove(card)
+      }
+      driftCards = []
+      driftActiveCardIndex = -1
       scene.remove(driftGroup)
       driftGroup = new THREE.Group()
 
@@ -512,13 +520,26 @@ export default function MarkdownScene(props: {
         })
 
         driftPoints = new THREE.Points(driftGeometry, material)
+        driftPoints.renderOrder = 0
         driftGroup.add(driftPoints)
+
+        // Create crisp text overlay cards for each slide (hidden until idle)
+        driftCards = props.documentModel.blocks.map((block) =>
+          createDriftTextCard(block, palette),
+        )
+        for (const card of driftCards) {
+          card.renderOrder = 1
+          card.visible = false
+          driftGroup.add(card)
+        }
+
         scene.add(driftGroup)
 
         // Begin forming first slide
         driftState = 'forming'
         driftProgress = 0
         driftSpinVelocity = 0
+        driftActiveCardIndex = -1
         setActiveDriftIndex(0)
         const firstBlock = props.documentModel.blocks[0]
         setDriftLabel(firstBlock ? firstBlock.label : '')
@@ -682,6 +703,14 @@ export default function MarkdownScene(props: {
               driftProgress = 0
             }
 
+            // Hide text card immediately when dissolving starts
+            if (driftActiveCardIndex >= 0 && driftActiveCardIndex < driftCards.length) {
+              const prevCard = driftCards[driftActiveCardIndex]!
+              ;(prevCard.material as THREE.MeshBasicMaterial).opacity = 0
+              prevCard.visible = false
+              driftActiveCardIndex = -1
+            }
+
             // Vortex spin during dissolve
             if (!isDriftDragging) {
               driftGroup.rotation.y += driftSpinVelocity
@@ -713,30 +742,51 @@ export default function MarkdownScene(props: {
               colors[i3 + 2]! += (0.55 + pulse * 0.35 - colors[i3 + 2]!) * 0.04
             }
           } else {
-            // Idle — subtle breathing with micro-drift
+            // Idle — particles crystallize into crisp text
             if (!isDriftDragging) {
               driftGroup.rotation.y += (0 - driftGroup.rotation.y) * 0.03
               driftGroup.rotation.x += (0 - driftGroup.rotation.x) * 0.03
             }
 
+            // Show and fade in the active text card
+            const idx = activeDriftIndex()
+            if (driftActiveCardIndex !== idx && idx < driftCards.length) {
+              // Hide previous card
+              if (driftActiveCardIndex >= 0 && driftActiveCardIndex < driftCards.length) {
+                driftCards[driftActiveCardIndex]!.visible = false
+                ;(driftCards[driftActiveCardIndex]!.material as THREE.MeshBasicMaterial).opacity = 0
+              }
+              driftActiveCardIndex = idx
+              driftCards[idx]!.visible = true
+            }
+
+            const activeCard = driftCards[idx]
+            if (activeCard) {
+              const mat = activeCard.material as THREE.MeshBasicMaterial
+              mat.opacity += (1 - mat.opacity) * 0.035
+            }
+
             for (let i = 0; i < DRIFT_PARTICLE_COUNT; i++) {
               const i3 = i * 3
               if (i < slide.textCount) {
+                // Hold position
                 positions[i3]! +=
                   (slide.textPositions[i3]! - positions[i3]!) * 0.07
                 positions[i3 + 1]! +=
                   (slide.textPositions[i3 + 1]! - positions[i3 + 1]!) * 0.07
-                // Breathing: gentle z-wave propagates across the text
+                // Subtle breathing wave
                 const wave = Math.sin(
                   seconds * 0.5 + positions[i3]! * 0.8 + positions[i3 + 1]! * 0.6,
                 )
                 positions[i3 + 2]! =
-                  slide.textPositions[i3 + 2]! + wave * 0.02
-                colors[i3]! += (slide.textColors[i3]! - colors[i3]!) * 0.05
+                  slide.textPositions[i3 + 2]! + wave * 0.012
+                // Dim text particles to a soft glow behind the crisp card
+                const glow = 0.12
+                colors[i3]! += (slide.textColors[i3]! * glow - colors[i3]!) * 0.04
                 colors[i3 + 1]! +=
-                  (slide.textColors[i3 + 1]! - colors[i3 + 1]!) * 0.05
+                  (slide.textColors[i3 + 1]! * glow - colors[i3 + 1]!) * 0.04
                 colors[i3 + 2]! +=
-                  (slide.textColors[i3 + 2]! - colors[i3 + 2]!) * 0.05
+                  (slide.textColors[i3 + 2]! * glow - colors[i3 + 2]!) * 0.04
               } else {
                 // Ambient cloud — slow orbital drift
                 const orbit = seconds * 0.08 + i * 0.3
@@ -1257,6 +1307,78 @@ function buildDriftSlide(
   )
 
   return sampleCanvasToParticles(canvas)
+}
+
+function createDriftTextCard(
+  block: BlogBlock,
+  palette: EnvironmentPalette,
+): THREE.Mesh {
+  const metrics = measureCard(block)
+  const canvas = document.createElement('canvas')
+  canvas.width = PANEL_PIXEL_WIDTH
+  canvas.height = metrics.height
+  const ctx = canvas.getContext('2d')!
+
+  // Subtle semi-transparent background
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = palette.panel
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  // Label
+  ctx.fillStyle = palette.accent
+  ctx.font = '600 20px "Outfit"'
+  ctx.fillText(block.label.toUpperCase(), PANEL_PADDING_X, 88)
+
+  // Title
+  let cursorY = 148
+  if (block.kind === 'heading') {
+    ctx.fillStyle = palette.text
+    ctx.font = '700 46px "Syne"'
+    drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
+    cursorY += metrics.titleLines.height + 28
+  } else {
+    ctx.fillStyle = palette.text
+    ctx.font = '700 30px "Syne"'
+    drawLayoutLines(ctx, metrics.titleLines, PANEL_PADDING_X, cursorY, metrics.titleLineHeight)
+    cursorY += metrics.titleLines.height + 18
+  }
+
+  // Body
+  if (
+    block.kind === 'code' ||
+    block.kind === 'diagram' ||
+    block.kind === 'table' ||
+    block.kind === 'formula'
+  ) {
+    ctx.fillStyle = palette.codeText
+  } else {
+    ctx.fillStyle = palette.text
+  }
+  ctx.font = metrics.bodyFont
+  drawLayoutLines(
+    ctx,
+    metrics.bodyLines,
+    PANEL_PADDING_X,
+    cursorY + metrics.bodyLineHeight * 0.9,
+    metrics.bodyLineHeight,
+  )
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+
+  const aspect = canvas.height / canvas.width
+  const worldHeight = DRIFT_WORLD_WIDTH * aspect
+  const geometry = new THREE.PlaneGeometry(DRIFT_WORLD_WIDTH, worldHeight)
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  })
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.position.set(0, 0, 0.02) // slightly in front of particles
+  return mesh
 }
 
 function sampleCanvasToParticles(canvas: HTMLCanvasElement): DriftSlideData {
