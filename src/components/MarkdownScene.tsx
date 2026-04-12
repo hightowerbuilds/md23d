@@ -473,7 +473,7 @@ export default function MarkdownScene(props: {
         ;(standardStarField.material as THREE.PointsMaterial).color.set(palette.star)
         standardStarField.position.set(0, 0, 0)
 
-        camera.position.set(0, 0, 4.8)
+        camera.position.set(0, 0, 3)
         camera.lookAt(0, 0, 0)
         cards = []
 
@@ -614,7 +614,7 @@ export default function MarkdownScene(props: {
         standardStarField.rotation.x = Math.sin(seconds * 0.05) * 0.03
 
         // Camera dynamics — pulls back during dissolve, pushes in during form
-        const cameraRestZ = 4.8
+        const cameraRestZ = 3
         const cameraTargetZ =
           driftState === 'dissolving'
             ? cameraRestZ + 1.4 * driftProgress
