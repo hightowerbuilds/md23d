@@ -568,6 +568,17 @@ export default function MarkdownScene(props: {
 
       arrangeSpace(cards, stage)
       stage.add(createNebulaRing(palette))
+
+      // Auto-focus the first card so users start reading immediately
+      if (cards.length > 0) {
+        focusedCardIndex = 0
+        const card = cards[0]!
+        const normal = new THREE.Vector3(0, 0, 1).applyEuler(card.baseRotation)
+        focusTarget.copy(card.basePosition).addScaledVector(normal, 3.2)
+        focusLookAt.copy(card.basePosition)
+        const block = props.documentModel.blocks[0]
+        setOrbitFocusLabel(block ? block.label : null)
+      }
     }
 
     const animate = (time: number) => {
