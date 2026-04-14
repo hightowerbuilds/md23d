@@ -1,10 +1,8 @@
 import { createFileRoute } from '@tanstack/solid-router'
 import {
   For,
-  Match,
   Show,
   Suspense,
-  Switch,
   createSignal,
   lazy,
   onMount,
@@ -27,183 +25,152 @@ export const Route = createFileRoute('/')({ component: App })
 const MarkdownScene = lazy(() => import('../components/MarkdownScene'))
 const BlueprintScene = lazy(() => import('../components/BlueprintScene'))
 
-type AppStage = 'home' | 'modes' | 'scene'
 type SceneEnvironment = 'space' | 'drift' | 'cosmos' | 'blueprint'
 
+// ── state shape ──────────────────────────────────────────────────
+
+interface ActiveDoc {
+  id: string
+  name: string
+  model: BlogDocument
+}
+
+interface UploadProgress {
+  name: string
+  phase: 'reading' | 'processing'
+  progress: number
+}
+
+// ── component ────────────────────────────────────────────────────
+
 function App() {
-  const [stage, setStage] = createSignal<AppStage>('home')
-  const [sessionId, setSessionId] = createSignal<string | null>(null)
+  // Core state — two independent axes
+  const [activeDoc, setActiveDoc] = createSignal<ActiveDoc | null>(null)
   const [environment, setEnvironment] = createSignal<SceneEnvironment | null>(null)
-  const [storedDrafts, setStoredDrafts] = createSignal<StoredMarkdownDraft[]>([])
-  const [currentDraftId, setCurrentDraftId] = createSignal<string | null>(null)
-  const [documentModel, setDocumentModel] = createSignal<BlogDocument | null>(null)
-  const [sourceName, setSourceName] = createSignal('')
-  const [loadError, setLoadError] = createSignal('')
-  const [uploadState, setUploadState] = createSignal<
-    'idle' | 'reading' | 'processing' | 'ready'
-  >('idle')
-  const [uploadProgress, setUploadProgress] = createSignal(0)
+
+  // Upload (transient)
+  const [uploading, setUploading] = createSignal<UploadProgress | null>(null)
+
+  // Draft persistence
+  const [sessionId, setSessionId] = createSignal<string | null>(null)
+  const [drafts, setDrafts] = createSignal<StoredMarkdownDraft[]>([])
+
+  // Errors
+  const [error, setError] = createSignal('')
+
+  // Derived: are we in a scene?
+  const inScene = () => activeDoc() !== null && environment() !== null
+
+  // ── session init ───────────────────────────────────────────────
 
   onMount(async () => {
     try {
-      const activeSessionId = await initializeDraftSession()
-      if (!activeSessionId) {
-        return
-      }
+      const sid = await initializeDraftSession()
+      if (!sid) return
+      setSessionId(sid)
 
-      setSessionId(activeSessionId)
-      const drafts = await listStoredMarkdownDrafts(activeSessionId)
-      setStoredDrafts(drafts)
+      const stored = await listStoredMarkdownDrafts(sid)
+      setDrafts(stored)
 
-      if (drafts.length > 0) {
-        await selectDraft(drafts[drafts.length - 1]!, 'modes')
+      // Auto-load most recent draft
+      if (stored.length > 0) {
+        loadDraft(stored[stored.length - 1]!)
       }
-    } catch (error) {
-      setLoadError(
-        error instanceof Error ? error.message : 'Unable to restore cached markdown drafts.',
-      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to restore cached drafts.')
     }
   })
 
-  const stageMarkdown = async (input: {
-    text: string
-    preferredName: string
-    size?: number
-    nextStage?: AppStage
-  }) => {
-    const text = input.text.trim()
-    if (!text) {
-      throw new Error('Unable to read that markdown file.')
-    }
+  // ── document loading ───────────────────────────────────────────
 
-    const size = input.size ?? getTextSize(input.text)
-    if (size > MAX_MARKDOWN_CACHE_BYTES) {
-      throw new Error('Draft exceeds the 5 MB session limit.')
-    }
-
-    const activeSessionId = sessionId() ?? (await initializeDraftSession())
-    if (!activeSessionId) {
-      throw new Error('Session storage is unavailable.')
-    }
-
-    const nextTotalSize = getStoredDraftsSize(storedDrafts()) + size
-    if (nextTotalSize > MAX_MARKDOWN_CACHE_BYTES) {
-      throw new Error('Saving this file would exceed the 5 MB session cache.')
-    }
-
-    setSessionId(activeSessionId)
-    setLoadError('')
-    setEnvironment(null)
-    setStage('home')
-    setUploadState('processing')
-    setUploadProgress(0.45)
-
-    const parsed = parseUploadedDocument(input.text, input.preferredName)
-    const savedDraft = await saveStoredMarkdownDraft(activeSessionId, {
-      name: input.preferredName || parsed.title,
-      text: input.text,
-      size,
-      savedAt: new Date().toISOString(),
-    })
-
-    await waitForFrame()
-    setUploadProgress(0.88)
-
-    startTransition(() => {
-      setStoredDrafts((drafts) => [...drafts, savedDraft])
-      setCurrentDraftId(savedDraft.id)
-      setDocumentModel(parsed)
-      setSourceName(savedDraft.name)
-      setUploadProgress(1)
-      setUploadState('ready')
-      setStage(input.nextStage ?? 'modes')
-    })
+  function loadDraft(draft: StoredMarkdownDraft) {
+    const parsed = parseUploadedDocument(draft.text, draft.name)
+    setActiveDoc({ id: draft.id, name: draft.name, model: parsed })
+    setError('')
   }
 
-  const handleFileSelection = async (file: File | undefined) => {
-    if (!file) {
-      return
-    }
+  async function handleFileUpload(file: File | undefined) {
+    if (!file) return
 
-    const previousDocumentModel = documentModel()
-    const previousSourceName = sourceName()
-    const previousDraftId = currentDraftId()
+    const prev = activeDoc()
 
     try {
-      setLoadError('')
-      setEnvironment(null)
-      setStage('home')
-      setUploadState('reading')
-      setUploadProgress(0)
-      setSourceName(file.name)
-      setDocumentModel(null)
+      setError('')
+      setUploading({ name: file.name, phase: 'reading', progress: 0 })
 
-      const text = await readFileWithProgress(file, (progress) => {
-        setUploadProgress(progress * 0.68)
+      const text = await readFileWithProgress(file, (p) => {
+        setUploading({ name: file.name, phase: 'reading', progress: p * 0.68 })
       })
 
-      await stageMarkdown({
+      if (!text.trim()) throw new Error('File is empty.')
+
+      const size = file.size
+      if (size > MAX_MARKDOWN_CACHE_BYTES) throw new Error('File exceeds the 5 MB limit.')
+
+      setUploading({ name: file.name, phase: 'processing', progress: 0.7 })
+
+      const sid = sessionId() ?? (await initializeDraftSession())
+      if (!sid) throw new Error('Session storage is unavailable.')
+      setSessionId(sid)
+
+      const totalSize = getStoredDraftsSize(drafts()) + size
+      if (totalSize > MAX_MARKDOWN_CACHE_BYTES) {
+        throw new Error('Adding this file would exceed the 5 MB session cache.')
+      }
+
+      const parsed = parseUploadedDocument(text, file.name)
+      const saved = await saveStoredMarkdownDraft(sid, {
+        name: file.name,
         text,
-        preferredName: file.name,
-        size: file.size,
+        size,
+        savedAt: new Date().toISOString(),
       })
-    } catch (error) {
-      setDocumentModel(previousDocumentModel)
-      setSourceName(previousSourceName)
-      setCurrentDraftId(previousDraftId)
-      setStage('home')
-      setUploadProgress(0)
-      setUploadState('idle')
-      setLoadError(
-        error instanceof Error ? error.message : 'Unable to read that markdown file.',
-      )
+
+      setUploading({ name: file.name, phase: 'processing', progress: 0.95 })
+      await waitForFrame()
+
+      startTransition(() => {
+        setDrafts((d) => [...d, saved])
+        setActiveDoc({ id: saved.id, name: saved.name, model: parsed })
+        setUploading(null)
+      })
+    } catch (e) {
+      if (prev) setActiveDoc(prev)
+      setUploading(null)
+      setError(e instanceof Error ? e.message : 'Unable to read that file.')
     }
   }
 
-  const returnHome = () => {
+  // ── actions ────────────────────────────────────────────────────
+
+  function enterEnvironment(env: SceneEnvironment) {
+    setEnvironment(env)
+  }
+
+  function exitScene() {
     setEnvironment(null)
-    setStage('home')
-    setLoadError('')
   }
 
-  const handleDraftSelection = async (draft: StoredMarkdownDraft) => {
-    const nextStage = environment() && stage() === 'scene' ? 'scene' : 'modes'
-    await selectDraft(draft, nextStage)
+  function selectDraft(draft: StoredMarkdownDraft) {
+    loadDraft(draft)
   }
 
-  const selectDraft = async (draft: StoredMarkdownDraft, nextStage: AppStage) => {
-    setLoadError('')
-    setUploadState('processing')
-    setUploadProgress(0.8)
-    setCurrentDraftId(draft.id)
-    setSourceName(draft.name)
-    await waitForFrame()
-    const parsed = parseUploadedDocument(draft.text, draft.name)
-
-    startTransition(() => {
-      setDocumentModel(parsed)
-      setSourceName(draft.name)
-      setUploadProgress(1)
-      setUploadState('ready')
-      setStage(nextStage)
-    })
-  }
+  // ── render ─────────────────────────────────────────────────────
 
   return (
     <main class="studio-page">
       <Show
-        when={stage() === 'scene' && environment() && documentModel()}
+        when={inScene()}
         fallback={
           <section class="landing-shell">
+            {/* Upload buttons — always visible */}
             <div class="landing-actions">
               <label class="upload-button upload-button-landing">
                 Upload MD
                 <input
                   type="file"
                   accept=".md,.markdown,text/markdown,text/plain"
-                  onChange={(event) =>
-                    void handleFileSelection(event.currentTarget.files?.[0])
-                  }
+                  onChange={(e) => void handleFileUpload(e.currentTarget.files?.[0])}
                 />
               </label>
 
@@ -212,152 +179,100 @@ function App() {
                 <input
                   type="file"
                   accept=".html,.htm,text/html,application/xhtml+xml"
-                  onChange={(event) =>
-                    void handleFileSelection(event.currentTarget.files?.[0])
-                  }
+                  onChange={(e) => void handleFileUpload(e.currentTarget.files?.[0])}
                 />
               </label>
             </div>
 
-            <Show when={uploadState() === 'reading' || uploadState() === 'processing'}>
-              <div class="progress-shell" aria-live="polite">
-                <div
-                  class="progress-fill"
-                  style={{ width: `${Math.max(4, Math.round(uploadProgress() * 100))}%` }}
-                />
-                <div class="progress-copy">
-                  <span class="progress-name">{sourceName()}</span>
-                  <span class="progress-phase">
-                    {uploadState() === 'reading' ? 'Reading' : 'Processing'}
-                  </span>
-                  <span class="progress-percent">
-                    {Math.round(uploadProgress() * 100)}%
-                  </span>
+            {/* Upload progress */}
+            <Show when={uploading()}>
+              {(up) => (
+                <div class="progress-shell" aria-live="polite">
+                  <div
+                    class="progress-fill"
+                    style={{ width: `${Math.max(4, Math.round(up().progress * 100))}%` }}
+                  />
+                  <div class="progress-copy">
+                    <span class="progress-name">{up().name}</span>
+                    <span class="progress-phase">
+                      {up().phase === 'reading' ? 'Reading' : 'Processing'}
+                    </span>
+                    <span class="progress-percent">
+                      {Math.round(up().progress * 100)}%
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </Show>
 
-            <Show when={stage() === 'modes' && uploadState() === 'ready' && documentModel()}>
-              <div class="mode-shell">
-                <p class="eyebrow">Environment</p>
-                <h1>{documentModel()!.title}</h1>
-                <p class="mode-copy">
-                  {sourceName()} · {documentModel()!.stats.wordCount} words ·{' '}
-                  {documentModel()!.stats.sectionCount} cards
-                </p>
+            {/* Environment picker — shows when a document is loaded */}
+            <Show when={activeDoc()}>
+              {(doc) => (
+                <div class="mode-shell">
+                  <p class="eyebrow">Environment</p>
+                  <h1>{doc().model.title}</h1>
+                  <p class="mode-copy">
+                    {doc().name} · {doc().model.stats.wordCount} words ·{' '}
+                    {doc().model.stats.sectionCount} cards
+                  </p>
 
-                <div class="landing-actions">
-                  <EnvironmentButton
-                    active={false}
-                    title="Orbit"
-                    onClick={() => {
-                      setEnvironment('space')
-                      setStage('scene')
-                    }}
-                  />
-                  <EnvironmentButton
-                    active={false}
-                    title="Drift"
-                    onClick={() => {
-                      setEnvironment('drift')
-                      setStage('scene')
-                    }}
-                  />
-                  <EnvironmentButton
-                    active={false}
-                    title="Cosmos"
-                    onClick={() => {
-                      setEnvironment('cosmos')
-                      setStage('scene')
-                    }}
-                  />
-                  <EnvironmentButton
-                    active={false}
-                    title="Blueprint"
-                    onClick={() => {
-                      setEnvironment('blueprint')
-                      setStage('scene')
-                    }}
-                  />
+                  <div class="landing-actions">
+                    <EnvironmentButton title="Orbit" onClick={() => enterEnvironment('space')} />
+                    <EnvironmentButton title="Drift" onClick={() => enterEnvironment('drift')} />
+                    <EnvironmentButton title="Cosmos" onClick={() => enterEnvironment('cosmos')} />
+                    <EnvironmentButton title="Blueprint" onClick={() => enterEnvironment('blueprint')} />
+                  </div>
                 </div>
-              </div>
+              )}
             </Show>
 
-            {loadError() ? <p class="inline-error">{loadError()}</p> : null}
+            {error() ? <p class="inline-error">{error()}</p> : null}
           </section>
         }
       >
+        {/* Scene mode — environment switcher + 3D scene */}
         <div class="studio-topbar">
           <div class="environment-switch">
-            <EnvironmentButton
-              active={false}
-              title="Return"
-              onClick={returnHome}
-            />
-            <EnvironmentButton
-              active={environment() === 'space'}
-              title="Orbit"
-              onClick={() => {
-                setEnvironment('space')
-                setStage('scene')
-              }}
-            />
-            <EnvironmentButton
-              active={environment() === 'drift'}
-              title="Drift"
-              onClick={() => {
-                setEnvironment('drift')
-                setStage('scene')
-              }}
-            />
-            <EnvironmentButton
-              active={environment() === 'cosmos'}
-              title="Cosmos"
-              onClick={() => {
-                setEnvironment('cosmos')
-                setStage('scene')
-              }}
-            />
-            <EnvironmentButton
-              active={environment() === 'blueprint'}
-              title="Blueprint"
-              onClick={() => {
-                setEnvironment('blueprint')
-                setStage('scene')
-              }}
-            />
+            <EnvironmentButton title="Return" onClick={exitScene} />
+            <EnvironmentButton title="Orbit" active={environment() === 'space'} onClick={() => enterEnvironment('space')} />
+            <EnvironmentButton title="Drift" active={environment() === 'drift'} onClick={() => enterEnvironment('drift')} />
+            <EnvironmentButton title="Cosmos" active={environment() === 'cosmos'} onClick={() => enterEnvironment('cosmos')} />
+            <EnvironmentButton title="Blueprint" active={environment() === 'blueprint'} onClick={() => enterEnvironment('blueprint')} />
           </div>
         </div>
 
-        {loadError() ? <p class="inline-error inline-error-top">{loadError()}</p> : null}
+        {error() ? <p class="inline-error inline-error-top">{error()}</p> : null}
 
         <section class="scene-stage">
-          <Suspense fallback={<div class="scene-loading">Loading 3D scene…</div>}>
-            <Show when={environment() && documentModel()}>
-              {environment() === 'blueprint' ? (
-                <BlueprintScene documentModel={documentModel()!} />
-              ) : (
-                <MarkdownScene
-                  documentModel={documentModel()!}
-                  environment={environment() as BlogEnvironment}
-                />
-              )}
+          <Suspense fallback={<div class="scene-loading">Loading 3D scene...</div>}>
+            <Show when={activeDoc()}>
+              {(doc) =>
+                environment() === 'blueprint' ? (
+                  <BlueprintScene documentModel={doc().model} />
+                ) : (
+                  <MarkdownScene
+                    documentModel={doc().model}
+                    environment={environment() as BlogEnvironment}
+                  />
+                )
+              }
             </Show>
           </Suspense>
         </section>
       </Show>
 
-      <Show when={storedDrafts().length > 0}>
+      {/* Draft strip — always visible when drafts exist */}
+      <Show when={drafts().length > 0}>
         <div class="draft-strip" aria-label="Cached markdown files">
-          <For each={storedDrafts()}>
+          <For each={drafts()}>
             {(draft) => (
               <button
                 type="button"
                 classList={{
                   'draft-chip': true,
-                  'is-active': currentDraftId() === draft.id,
+                  'is-active': activeDoc()?.id === draft.id,
                 }}
-                onClick={() => void handleDraftSelection(draft)}
+                onClick={() => selectDraft(draft)}
               >
                 {draft.name}
               </button>
@@ -369,10 +284,12 @@ function App() {
   )
 }
 
+// ── small components ─────────────────────────────────────────────
+
 function EnvironmentButton(props: {
-  active: boolean
   title: string
   onClick: () => void
+  active?: boolean
   disabled?: boolean
 }) {
   return (
@@ -380,7 +297,7 @@ function EnvironmentButton(props: {
       type="button"
       classList={{
         'environment-button': true,
-        'is-active': props.active,
+        'is-active': props.active ?? false,
       }}
       onClick={props.onClick}
       disabled={props.disabled}
@@ -389,6 +306,8 @@ function EnvironmentButton(props: {
     </button>
   )
 }
+
+// ── utilities ────────────────────────────────────────────────────
 
 async function readFileWithProgress(
   file: File,
@@ -407,10 +326,7 @@ async function readFileWithProgress(
 
   while (true) {
     const { done, value } = await reader.read()
-    if (done) {
-      break
-    }
-
+    if (done) break
     loaded += value.byteLength
     text += decoder.decode(value, { stream: true })
     onProgress(loaded / file.size)
@@ -425,8 +341,4 @@ function waitForFrame() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => resolve())
   })
-}
-
-function getTextSize(text: string) {
-  return new Blob([text]).size
 }
