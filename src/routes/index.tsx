@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/solid-router'
+import { createFileRoute } from '@tanstack/solid-router'
 import {
   For,
   Match,
@@ -25,13 +25,15 @@ import type { BlogDocument, BlogEnvironment } from '../lib/blog/types'
 export const Route = createFileRoute('/')({ component: App })
 
 const MarkdownScene = lazy(() => import('../components/MarkdownScene'))
+const BlueprintScene = lazy(() => import('../components/BlueprintScene'))
 
 type AppStage = 'home' | 'modes' | 'scene'
+type SceneEnvironment = 'space' | 'drift' | 'cosmos' | 'blueprint'
 
 function App() {
   const [stage, setStage] = createSignal<AppStage>('home')
   const [sessionId, setSessionId] = createSignal<string | null>(null)
-  const [environment, setEnvironment] = createSignal<BlogEnvironment | null>(null)
+  const [environment, setEnvironment] = createSignal<SceneEnvironment | null>(null)
   const [storedDrafts, setStoredDrafts] = createSignal<StoredMarkdownDraft[]>([])
   const [currentDraftId, setCurrentDraftId] = createSignal<string | null>(null)
   const [documentModel, setDocumentModel] = createSignal<BlogDocument | null>(null)
@@ -260,6 +262,14 @@ function App() {
                         setStage('scene')
                       }}
                     />
+                    <EnvironmentButton
+                      active={false}
+                      title="Blueprint"
+                      onClick={() => {
+                        setEnvironment('blueprint')
+                        setStage('scene')
+                      }}
+                    />
                   </div>
                 </div>
               </Match>
@@ -287,9 +297,6 @@ function App() {
                       }
                     />
                   </label>
-                  <Link to="/uml" class="upload-button upload-button-landing">
-                    UML Lab
-                  </Link>
                 </div>
               </Match>
             </Switch>
@@ -329,6 +336,14 @@ function App() {
                 setStage('scene')
               }}
             />
+            <EnvironmentButton
+              active={environment() === 'blueprint'}
+              title="Blueprint"
+              onClick={() => {
+                setEnvironment('blueprint')
+                setStage('scene')
+              }}
+            />
           </div>
         </div>
 
@@ -337,10 +352,14 @@ function App() {
         <section class="scene-stage">
           <Suspense fallback={<div class="scene-loading">Loading 3D scene…</div>}>
             <Show when={environment() && documentModel()}>
-              <MarkdownScene
-                documentModel={documentModel()!}
-                environment={environment()}
-              />
+              {environment() === 'blueprint' ? (
+                <BlueprintScene documentModel={documentModel()!} />
+              ) : (
+                <MarkdownScene
+                  documentModel={documentModel()!}
+                  environment={environment() as BlogEnvironment}
+                />
+              )}
             </Show>
           </Suspense>
         </section>
