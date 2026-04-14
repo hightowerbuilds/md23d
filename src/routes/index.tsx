@@ -15,6 +15,7 @@ import {
   initializeDraftSession,
   listStoredMarkdownDrafts,
   saveStoredMarkdownDraft,
+  deleteStoredMarkdownDraft,
   type StoredMarkdownDraft,
 } from '../lib/blog/localDraftStorage'
 import { parseUploadedDocument } from '../lib/blog/parseUploadedDocument'
@@ -155,6 +156,17 @@ function App() {
     loadDraft(draft)
   }
 
+  async function removeDraft(draft: StoredMarkdownDraft) {
+    await deleteStoredMarkdownDraft(draft.id)
+    setDrafts((d) => d.filter((x) => x.id !== draft.id))
+
+    // If we just removed the active doc, clear it
+    if (activeDoc()?.id === draft.id) {
+      setActiveDoc(null)
+      setEnvironment(null)
+    }
+  }
+
   // ── render ─────────────────────────────────────────────────────
 
   return (
@@ -266,16 +278,31 @@ function App() {
         <div class="draft-strip" aria-label="Cached markdown files">
           <For each={drafts()}>
             {(draft) => (
-              <button
-                type="button"
+              <div
                 classList={{
                   'draft-chip': true,
                   'is-active': activeDoc()?.id === draft.id,
                 }}
-                onClick={() => selectDraft(draft)}
               >
-                {draft.name}
-              </button>
+                <button
+                  type="button"
+                  class="draft-chip-name"
+                  onClick={() => selectDraft(draft)}
+                >
+                  {draft.name}
+                </button>
+                <button
+                  type="button"
+                  class="draft-chip-remove"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void removeDraft(draft)
+                  }}
+                  aria-label={`Remove ${draft.name}`}
+                >
+                  x
+                </button>
+              </div>
             )}
           </For>
         </div>

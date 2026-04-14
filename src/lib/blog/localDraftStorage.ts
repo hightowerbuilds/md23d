@@ -99,6 +99,22 @@ export async function saveStoredMarkdownDraft(
   return storedDraft
 }
 
+export async function deleteStoredMarkdownDraft(id: string) {
+  if (!canUseIndexedDb()) return
+  const db = await openDraftDatabase()
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.delete(id)
+
+    request.onsuccess = () => resolve()
+    request.onerror = () => {
+      reject(request.error ?? new Error('Unable to delete cached draft.'))
+    }
+  })
+}
+
 export function getStoredDraftsSize(drafts: StoredMarkdownDraft[]) {
   return drafts.reduce((total, draft) => total + draft.size, 0)
 }

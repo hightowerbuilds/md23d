@@ -335,6 +335,9 @@ code {
 
 .draft-chip {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   padding: 0 0 0.4rem;
   border: 0;
   border-bottom: 1px solid transparent;
@@ -350,6 +353,37 @@ code {
 .draft-chip:hover {
   border-color: var(--text);
   color: var(--text);
+}
+
+.draft-chip-name {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.draft-chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.7rem;
+  cursor: pointer;
+  padding: 0 0.15rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.draft-chip:hover .draft-chip-remove {
+  opacity: 1;
+}
+
+.draft-chip-remove:hover {
+  color: #ff6b6b;
 }
 
 .about-page {
