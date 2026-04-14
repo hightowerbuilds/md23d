@@ -101,7 +101,10 @@ export default function BlueprintScene(props: Props) {
     // ── build blocks ──────────────────────────────────────────
     const blocks = props.documentModel.blocks
     const root = new THREE.Group()
+    const cardGroups: { group: THREE.Group; block: BlogBlock; isUML: boolean }[] = []
+
     let cursorY = 0
+    let lastSection = -1
 
     setStatus('Loading font...')
     setProgress(5)
@@ -120,14 +123,20 @@ export default function BlueprintScene(props: Props) {
       setStatus(`Block ${i + 1} / ${blocks.length}`)
       setProgress(10 + Math.round((i / blocks.length) * 85))
 
-      // Yield to let progress bar paint
       if (i % 3 === 0) {
         await new Promise<void>(res => requestAnimationFrame(() => res()))
       }
 
-      let group: THREE.Group | null = null
+      // Section gap
+      if (block.sectionIndex !== undefined && block.sectionIndex !== lastSection) {
+        if (lastSection >= 0) cursorY -= 1.2
+        lastSection = block.sectionIndex
+      }
 
-      // Try 3D UML for mermaid diagrams
+      let group: THREE.Group | null = null
+      let isUML = false
+
+      // Mermaid diagrams → 3D mesh objects
       if (
         block.kind === 'diagram' &&
         font &&
@@ -137,11 +146,11 @@ export default function BlueprintScene(props: Props) {
         try {
           const uml = buildUML3D(block.text, font)
           group = uml.group
-          // Scale to reasonable size
           const box = new THREE.Box3().setFromObject(group)
           const sz = box.getSize(new THREE.Vector3())
-          const scale = 4 / Math.max(sz.x, sz.y, 1)
+          const scale = 5 / Math.max(sz.x, sz.y, 1)
           group.scale.setScalar(scale * 0.8)
+          isUML = true
           disposables.push(uml.dispose)
         } catch (e) {
           console.warn('UML build failed for block', block.id, e)
@@ -149,18 +158,39 @@ export default function BlueprintScene(props: Props) {
         }
       }
 
-      // Fallback: canvas card for everything else
+      // Everything else → canvas card
       if (!group) {
         group = makeCard(block)
       }
 
       if (group) {
-        group.position.set(0, cursorY, 0)
+        // Spatial layout: stagger X by lane, vary Z for depth
+        const lane = (i % 3) - 1 // -1, 0, 1
+        const col = Math.floor(i / 3)
+        const x = lane * 1.8 + (col % 2 === 0 ? 0.3 : -0.3)
+        const z = -Math.abs(lane) * 1.2 - col * 0.4
+
+        // Headings center, wider gap before them
+        if (block.kind === 'heading') {
+          group.position.set(0, cursorY - 0.4, 0.5)
+        } else if (isUML) {
+          // UML diagrams center, push forward in Z
+          group.position.set(0, cursorY, 1.5)
+        } else {
+          group.position.set(x, cursorY, z)
+          // Slight rotation toward center
+          group.rotation.y = lane * -0.08
+        }
+
         root.add(group)
+        cardGroups.push({ group, block, isUML })
 
         const box = new THREE.Box3().setFromObject(group)
         const size = box.getSize(new THREE.Vector3())
-        cursorY -= size.y + 0.5
+
+        // Headings and UML get more space
+        const gap = block.kind === 'heading' ? 0.8 : isUML ? 1.0 : 0.4
+        cursorY -= size.y + gap
       }
     }
 
@@ -169,6 +199,7 @@ export default function BlueprintScene(props: Props) {
     if (!rootBox.isEmpty()) {
       const center = rootBox.getCenter(new THREE.Vector3())
       root.position.y -= center.y
+      root.position.z -= center.z / 2
     }
     scene.add(root)
 
@@ -176,13 +207,40 @@ export default function BlueprintScene(props: Props) {
     const finalBox = new THREE.Box3().setFromObject(root)
     if (!finalBox.isEmpty()) {
       const sz = finalBox.getSize(new THREE.Vector3())
-      camera.position.set(0, 0, Math.max(sz.x, sz.y, sz.z, 8) * 1.3)
+      camera.position.set(0, 0, Math.max(sz.x, sz.y, 8) * 1.1)
     }
     ctrl.target.set(0, 0, 0)
     ctrl.update()
 
     setProgress(100)
     setLoading(false)
+
+    // ── post-build: gentle idle animation ─────────────────────
+    // Override animate to add subtle float + billboard UML
+    const origAnimate = animate
+    const animateWithFloat = () => {
+      frameId = requestAnimationFrame(animateWithFloat)
+      ctrl.update()
+      const t = performance.now() * 0.001
+
+      for (let i = 0; i < cardGroups.length; i++) {
+        const { group, isUML } = cardGroups[i]
+        group.userData._baseY = group.userData._baseY ?? group.position.y
+        group.position.y =
+          group.userData._baseY + Math.sin(t * 0.25 + i * 0.5) * 0.03
+
+        // UML diagrams billboard toward camera
+        if (isUML) {
+          group.quaternion.copy(camera.quaternion)
+        }
+      }
+
+      r.render(scene, camera)
+    }
+
+    // Switch to enhanced animation
+    cancelAnimationFrame(frameId)
+    animateWithFloat()
   })
 
   return (
