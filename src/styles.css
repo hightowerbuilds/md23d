@@ -574,3 +574,65 @@ code {
     gap: 1rem;
   }
 }
+
+/* ── UML test page ─────────────────────────────────────────────── */
+
+.uml-page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #030914;
+}
+
+.uml-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(3, 9, 20, 0.9);
+  border-bottom: 1px solid rgba(120, 218, 255, 0.12);
+  z-index: 10;
+}
+
+.uml-tab {
+  padding: 0.4rem 1rem;
+  border: 1px solid rgba(120, 218, 255, 0.2);
+  border-radius: 0;
+  background: transparent;
+  color: rgba(120, 218, 255, 0.6);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.uml-tab:hover {
+  background: rgba(120, 218, 255, 0.08);
+  color: rgba(120, 218, 255, 0.9);
+}
+
+.uml-tab.active {
+  background: rgba(120, 218, 255, 0.15);
+  color: #78daff;
+  border-color: rgba(120, 218, 255, 0.5);
+}
+
+.uml-status {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(120, 218, 255, 0.35);
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.uml-container {
+  flex: 1;
+  overflow: hidden;
+}

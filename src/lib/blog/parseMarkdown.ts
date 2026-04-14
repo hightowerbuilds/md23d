@@ -110,7 +110,24 @@ export function parseMarkdownDocument(markdown: string): BlogDocument {
         }
 
         const kind = isDiagramLanguage(token.lang) ? 'diagram' : 'code'
-        const lines = normalizeCodeText(token.text).split('\n')
+        const normalizedCode = normalizeCodeText(token.text)
+
+        // Mermaid diagrams stay as a single block (no pagination)
+        // so the 3D UML builder gets the full graph source
+        if (token.lang?.trim().toLowerCase() === 'mermaid') {
+          codeCount += 1
+          blocks.push({
+            id: `code-${codeCount}`,
+            kind,
+            text: normalizedCode,
+            label: formatCodeLabel(token.lang, kind, codeCount),
+            language: token.lang,
+            sectionIndex: currentSection,
+          })
+          break
+        }
+
+        const lines = normalizedCode.split('\n')
         const pageSize = kind === 'diagram' ? DIAGRAM_PAGE_SIZE : CODE_PAGE_SIZE
 
         for (const slice of paginate(lines, pageSize)) {

@@ -15,6 +15,10 @@ import type {
   BlogDocument,
   BlogEnvironment,
 } from '../lib/blog/types'
+import { loadUMLFont, getUMLFont, buildUML3D } from '../lib/uml'
+
+// Pre-load UML 3D font as early as possible (non-blocking, client only)
+if (typeof window !== 'undefined') loadUMLFont().catch(() => {})
 
 const PANEL_PIXEL_WIDTH = 980
 const PANEL_WORLD_WIDTH = 4.6
@@ -51,10 +55,30 @@ function invalidatePreparedCache(docId: string) {
 }
 
 type SceneCard = {
-  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  mesh: THREE.Object3D
   basePosition: THREE.Vector3
   baseRotation: THREE.Euler
   baseScale: THREE.Vector3
+  isUML?: boolean
+}
+
+function lerpCardOpacity(card: SceneCard, target: number, speed: number) {
+  if (card.isUML) {
+    const cur = (card.mesh.userData._opacity as number) ?? 1
+    const next = cur + (target - cur) * speed
+    card.mesh.userData._opacity = next
+    card.mesh.traverse((child: any) => {
+      if (child.material && 'opacity' in child.material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const m of mats) {
+          m.opacity = next * (m.userData?._baseOpacity ?? 1)
+        }
+      }
+    })
+  } else {
+    const mat = (card.mesh as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>).material
+    mat.opacity += (target - mat.opacity) * speed
+  }
 }
 
 type DriftSlideData = {
@@ -557,14 +581,18 @@ export default function MarkdownScene(props: {
       fillLight.intensity = 20
       driftSlides = []
 
-      cards = props.documentModel.blocks.map((block, index) =>
-        createContentCard(
+      cards = props.documentModel.blocks.map((block, index) => {
+        if (isMermaidBlock(block)) {
+          const umlCard = createMermaidCard(block, index)
+          if (umlCard) return umlCard
+        }
+        return createContentCard(
           block,
           index,
           currentEnvironment!,
           renderer.capabilities.getMaxAnisotropy(),
-        ),
-      )
+        )
+      })
 
       arrangeSpace(cards, stage)
       stage.add(createNebulaRing(palette))
@@ -607,16 +635,19 @@ export default function MarkdownScene(props: {
           for (const [index, card] of cards.entries()) {
             const isFocused = index === focusedCardIndex
             const targetOpacity = isFocused ? 1 : 0.12
-            card.mesh.material.opacity +=
-              (targetOpacity - card.mesh.material.opacity) * 0.08
+            lerpCardOpacity(card, targetOpacity, 0.08)
 
             const drift = isFocused ? 0.03 : 0.06
             card.mesh.position.x =
               card.basePosition.x + Math.cos(seconds * 0.2 + index) * drift
             card.mesh.position.y =
               card.basePosition.y + Math.sin(seconds * 0.35 + index * 0.6) * drift
-            card.mesh.rotation.y = card.baseRotation.y
-            card.mesh.rotation.x = card.baseRotation.x
+            if (card.isUML) {
+              card.mesh.quaternion.copy(camera.quaternion)
+            } else {
+              card.mesh.rotation.y = card.baseRotation.y
+              card.mesh.rotation.x = card.baseRotation.x
+            }
           }
         } else {
           // Unfocused orbit: free-floating constellation
@@ -628,17 +659,20 @@ export default function MarkdownScene(props: {
           stage.rotation.x = Math.cos(seconds * 0.13) * 0.03
 
           for (const [index, card] of cards.entries()) {
-            card.mesh.material.opacity +=
-              (1 - card.mesh.material.opacity) * 0.06
+            lerpCardOpacity(card, 1, 0.06)
 
             card.mesh.position.x =
               card.basePosition.x + Math.cos(seconds * 0.34 + index) * 0.12
             card.mesh.position.y =
               card.basePosition.y + Math.sin(seconds * 0.7 + index * 0.6) * 0.2
-            card.mesh.rotation.y =
-              card.baseRotation.y + Math.sin(seconds * 0.5 + index * 0.4) * 0.06
-            card.mesh.rotation.x =
-              card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
+            if (card.isUML) {
+              card.mesh.quaternion.copy(camera.quaternion)
+            } else {
+              card.mesh.rotation.y =
+                card.baseRotation.y + Math.sin(seconds * 0.5 + index * 0.4) * 0.06
+              card.mesh.rotation.x =
+                card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
+            }
           }
         }
       } else if (currentEnvironment === 'drift') {
@@ -1141,6 +1175,57 @@ function createContentCard(
     basePosition: new THREE.Vector3(),
     baseRotation: new THREE.Euler(),
     baseScale: new THREE.Vector3(1, 1, 1),
+  }
+}
+
+function isMermaidBlock(block: BlogBlock): boolean {
+  return (
+    block.kind === 'diagram' &&
+    block.language?.trim().toLowerCase() === 'mermaid' &&
+    /^(graph|flowchart)\s/i.test(block.text.trim())
+  )
+}
+
+function createMermaidCard(
+  block: BlogBlock,
+  index: number,
+): SceneCard | null {
+  const font = getUMLFont()
+  if (!font) return null
+
+  try {
+    const result = buildUML3D(block.text, font)
+    const group = result.group
+
+    // Scale diagram to fit roughly the same space as a card
+    const box = new THREE.Box3().setFromObject(group)
+    const size = box.getSize(new THREE.Vector3())
+    const maxDim = Math.max(size.x, size.y, 1)
+    const scale = PANEL_WORLD_WIDTH / maxDim
+    group.scale.setScalar(scale * 0.85)
+
+    // Store base opacity on every material so lerpCardOpacity can modulate
+    group.traverse((child: any) => {
+      if (child.material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const m of mats) {
+          m.userData = m.userData || {}
+          m.userData._baseOpacity = m.opacity ?? 1
+        }
+      }
+    })
+
+    group.userData = { index, kind: 'diagram', _opacity: 1 }
+
+    return {
+      mesh: group,
+      basePosition: new THREE.Vector3(),
+      baseRotation: new THREE.Euler(),
+      baseScale: new THREE.Vector3(1, 1, 1),
+      isUML: true,
+    }
+  } catch {
+    return null
   }
 }
 
