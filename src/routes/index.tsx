@@ -195,111 +195,93 @@ function App() {
         when={stage() === 'scene' && environment() && documentModel()}
         fallback={
           <section class="landing-shell">
-            <Switch>
-              <Match when={uploadState() === 'reading'}>
-                <div class="progress-shell" aria-live="polite" aria-label="Importing markdown file">
-                  <div
-                    class="progress-fill"
-                    style={{ width: `${Math.max(4, Math.round(uploadProgress() * 100))}%` }}
-                  />
-                  <div class="progress-copy">
-                    <span class="progress-name">{sourceName()}</span>
-                    <span class="progress-phase">Reading</span>
-                    <span class="progress-percent">
-                      {Math.round(uploadProgress() * 100)}%
-                    </span>
-                  </div>
+            <div class="landing-actions">
+              <label class="upload-button upload-button-landing">
+                Upload MD
+                <input
+                  type="file"
+                  accept=".md,.markdown,text/markdown,text/plain"
+                  onChange={(event) =>
+                    void handleFileSelection(event.currentTarget.files?.[0])
+                  }
+                />
+              </label>
+
+              <label class="upload-button upload-button-landing">
+                Upload HTML
+                <input
+                  type="file"
+                  accept=".html,.htm,text/html,application/xhtml+xml"
+                  onChange={(event) =>
+                    void handleFileSelection(event.currentTarget.files?.[0])
+                  }
+                />
+              </label>
+            </div>
+
+            <Show when={uploadState() === 'reading' || uploadState() === 'processing'}>
+              <div class="progress-shell" aria-live="polite">
+                <div
+                  class="progress-fill"
+                  style={{ width: `${Math.max(4, Math.round(uploadProgress() * 100))}%` }}
+                />
+                <div class="progress-copy">
+                  <span class="progress-name">{sourceName()}</span>
+                  <span class="progress-phase">
+                    {uploadState() === 'reading' ? 'Reading' : 'Processing'}
+                  </span>
+                  <span class="progress-percent">
+                    {Math.round(uploadProgress() * 100)}%
+                  </span>
                 </div>
-              </Match>
+              </div>
+            </Show>
 
-              <Match when={uploadState() === 'processing'}>
-                <div class="progress-shell" aria-live="polite" aria-label="Processing markdown file">
-                  <div
-                    class="progress-fill"
-                    style={{ width: `${Math.max(4, Math.round(uploadProgress() * 100))}%` }}
-                  />
-                  <div class="progress-copy">
-                    <span class="progress-name">{sourceName()}</span>
-                    <span class="progress-phase">Processing</span>
-                    <span class="progress-percent">
-                      {Math.round(uploadProgress() * 100)}%
-                    </span>
-                  </div>
-                </div>
-              </Match>
+            <Show when={stage() === 'modes' && uploadState() === 'ready' && documentModel()}>
+              <div class="mode-shell">
+                <p class="eyebrow">Environment</p>
+                <h1>{documentModel()!.title}</h1>
+                <p class="mode-copy">
+                  {sourceName()} · {documentModel()!.stats.wordCount} words ·{' '}
+                  {documentModel()!.stats.sectionCount} cards
+                </p>
 
-              <Match when={stage() === 'modes' && uploadState() === 'ready' && documentModel()}>
-                <div class="mode-shell">
-                  <p class="eyebrow">Environment</p>
-                  <h1>{documentModel()!.title}</h1>
-                  <p class="mode-copy">
-                    {sourceName()} · {documentModel()!.stats.wordCount} words ·{' '}
-                    {documentModel()!.stats.sectionCount} cards
-                  </p>
-
-                  <div class="landing-actions">
-                    <EnvironmentButton
-                      active={false}
-                      title="Orbit"
-                      onClick={() => {
-                        setEnvironment('space')
-                        setStage('scene')
-                      }}
-                    />
-                    <EnvironmentButton
-                      active={false}
-                      title="Drift"
-                      onClick={() => {
-                        setEnvironment('drift')
-                        setStage('scene')
-                      }}
-                    />
-                    <EnvironmentButton
-                      active={false}
-                      title="Cosmos"
-                      onClick={() => {
-                        setEnvironment('cosmos')
-                        setStage('scene')
-                      }}
-                    />
-                    <EnvironmentButton
-                      active={false}
-                      title="Blueprint"
-                      onClick={() => {
-                        setEnvironment('blueprint')
-                        setStage('scene')
-                      }}
-                    />
-                  </div>
-                </div>
-              </Match>
-
-              <Match when={true}>
                 <div class="landing-actions">
-                  <label class="upload-button upload-button-landing">
-                    Upload MD
-                    <input
-                      type="file"
-                      accept=".md,.markdown,text/markdown,text/plain"
-                      onChange={(event) =>
-                        void handleFileSelection(event.currentTarget.files?.[0])
-                      }
-                    />
-                  </label>
-
-                  <label class="upload-button upload-button-landing">
-                    Upload HTML
-                    <input
-                      type="file"
-                      accept=".html,.htm,text/html,application/xhtml+xml"
-                      onChange={(event) =>
-                        void handleFileSelection(event.currentTarget.files?.[0])
-                      }
-                    />
-                  </label>
+                  <EnvironmentButton
+                    active={false}
+                    title="Orbit"
+                    onClick={() => {
+                      setEnvironment('space')
+                      setStage('scene')
+                    }}
+                  />
+                  <EnvironmentButton
+                    active={false}
+                    title="Drift"
+                    onClick={() => {
+                      setEnvironment('drift')
+                      setStage('scene')
+                    }}
+                  />
+                  <EnvironmentButton
+                    active={false}
+                    title="Cosmos"
+                    onClick={() => {
+                      setEnvironment('cosmos')
+                      setStage('scene')
+                    }}
+                  />
+                  <EnvironmentButton
+                    active={false}
+                    title="Blueprint"
+                    onClick={() => {
+                      setEnvironment('blueprint')
+                      setStage('scene')
+                    }}
+                  />
                 </div>
-              </Match>
-            </Switch>
+              </div>
+            </Show>
 
             {loadError() ? <p class="inline-error">{loadError()}</p> : null}
           </section>
