@@ -608,6 +608,20 @@ code {
   transition: all 0.15s ease;
 }
 
+.uml-brand {
+  color: #78daff !important;
+  border-color: transparent;
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.uml-divider {
+  width: 1px;
+  height: 1.2rem;
+  background: rgba(120, 218, 255, 0.2);
+}
+
 .uml-tab:hover {
   background: rgba(120, 218, 255, 0.08);
   color: rgba(120, 218, 255, 0.9);

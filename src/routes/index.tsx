@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/solid-router'
+import { createFileRoute, Link } from '@tanstack/solid-router'
 import {
   For,
   Match,
@@ -287,6 +287,9 @@ function App() {
                       }
                     />
                   </label>
+                  <Link to="/uml" class="upload-button upload-button-landing">
+                    UML Lab
+                  </Link>
                 </div>
               </Match>
             </Switch>

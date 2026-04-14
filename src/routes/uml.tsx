@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/solid-router'
+import { createFileRoute, Link } from '@tanstack/solid-router'
 import { onMount, onCleanup, createSignal } from 'solid-js'
 import * as THREE from 'three'
 // @ts-ignore — no declaration file for three addons
@@ -363,6 +363,8 @@ function UMLTest() {
   return (
     <main class="uml-page">
       <div class="uml-toolbar">
+        <Link to="/" class="uml-tab uml-brand">MD23D</Link>
+        <span class="uml-divider" />
         {TABS.map((tab, i) => (
           <button
             class={`uml-tab ${activeDiagram() === i ? 'active' : ''}`}

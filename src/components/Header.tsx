@@ -20,6 +20,13 @@ export default function Header() {
             Studio
           </Link>
           <Link
+            to="/uml"
+            class="nav-link"
+            activeProps={{ class: 'nav-link is-active' }}
+          >
+            UML
+          </Link>
+          <Link
             to="/about"
             class="nav-link"
             activeProps={{ class: 'nav-link is-active' }}
