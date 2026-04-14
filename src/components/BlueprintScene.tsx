@@ -1,35 +1,28 @@
 import { onMount, onCleanup, createSignal, Show } from 'solid-js'
 import * as THREE from 'three'
-// @ts-ignore — no declaration file for three addons
+// @ts-ignore
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { loadUMLFont } from '../lib/uml'
-import { composeSceneAsync, type ComposedScene } from '../lib/md3d'
-import type { BlogDocument } from '../lib/blog/types'
+import type { BlogDocument, BlogBlock } from '../lib/blog/types'
+import { loadUMLFont, buildUML3D } from '../lib/uml'
 
-interface BlueprintSceneProps {
+interface Props {
   documentModel: BlogDocument
 }
 
-export default function BlueprintScene(props: BlueprintSceneProps) {
+export default function BlueprintScene(props: Props) {
   let hostRef: HTMLDivElement | undefined
-
-  // Mutable refs for cleanup — set during onMount, cleaned in onCleanup
   let renderer: THREE.WebGLRenderer | undefined
   let controls: OrbitControls | undefined
-  let composed: ComposedScene | null = null
-  let resizeObs: ResizeObserver | undefined
   let frameId = 0
+  const disposables: (() => void)[] = []
 
   const [progress, setProgress] = createSignal(0)
-  const [phase, setPhase] = createSignal('Loading font...')
-  const [building, setBuilding] = createSignal(true)
+  const [status, setStatus] = createSignal('Initializing...')
+  const [loading, setLoading] = createSignal(true)
 
-  // All cleanup in one place — at the component body level, not inside async
   onCleanup(() => {
     if (frameId) cancelAnimationFrame(frameId)
-    resizeObs?.disconnect()
-    composed?.dispose()
-    composed = null
+    for (const d of disposables) d()
     controls?.dispose()
     if (renderer) {
       renderer.dispose()
@@ -39,163 +32,169 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
 
   onMount(async () => {
     if (!hostRef) return
+    const w = hostRef.clientWidth || 800
+    const h = hostRef.clientHeight || 600
 
-    // ── renderer ──────────────────────────────────────────────
-    const r = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    })
+    // ── basic Three.js setup ──────────────────────────────────
+    const r = new THREE.WebGLRenderer({ antialias: true })
     r.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    r.setSize(hostRef.clientWidth, hostRef.clientHeight)
+    r.setSize(w, h)
     r.setClearColor(0x030914)
     r.outputColorSpace = THREE.SRGBColorSpace
     r.toneMapping = THREE.ACESFilmicToneMapping
-    r.toneMappingExposure = 1.2
     hostRef.appendChild(r.domElement)
     renderer = r
 
-    // ── scene ─────────────────────────────────────────────────
     const scene = new THREE.Scene()
-    scene.fog = new THREE.FogExp2(0x030914, 0.012)
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 300)
+    camera.position.set(0, 0, 12)
 
-    // ── camera ────────────────────────────────────────────────
-    const aspect = hostRef.clientWidth / hostRef.clientHeight
-    const camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 200)
-    camera.position.set(0, 0, 18)
-
-    // ── controls ──────────────────────────────────────────────
     const ctrl = new OrbitControls(camera, r.domElement)
     ctrl.enableDamping = true
     ctrl.dampingFactor = 0.08
-    ctrl.minDistance = 2
-    ctrl.maxDistance = 80
+    ctrl.maxDistance = 120
     controls = ctrl
 
-    // ── lighting ──────────────────────────────────────────────
+    // Lights
     scene.add(new THREE.HemisphereLight(0xd4eeff, 0x06080d, 1.4))
-    const key = new THREE.DirectionalLight(0xffffff, 1.3)
-    key.position.set(6, 9, 5)
-    scene.add(key)
-    const fill = new THREE.PointLight(0x69ceff, 18, 40)
-    fill.position.set(-5, 3, 4)
-    scene.add(fill)
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2)
+    keyLight.position.set(5, 8, 5)
+    scene.add(keyLight)
+    scene.add(new THREE.PointLight(0x69ceff, 15, 40))
 
-    // ── star field ────────────────────────────────────────────
-    const starCount = 1200
-    const starPos = new Float32Array(starCount * 3)
-    for (let i = 0; i < starCount; i++) {
-      const theta = Math.random() * Math.PI * 2
-      const phi = Math.acos(2 * Math.random() - 1)
-      const rad = 30 + Math.random() * 50
-      starPos[i * 3] = rad * Math.sin(phi) * Math.cos(theta)
-      starPos[i * 3 + 1] = rad * Math.sin(phi) * Math.sin(theta)
-      starPos[i * 3 + 2] = rad * Math.cos(phi)
+    // Stars
+    const starGeo = new THREE.BufferGeometry()
+    const starVerts = new Float32Array(1200 * 3)
+    for (let i = 0; i < 1200; i++) {
+      const th = Math.random() * Math.PI * 2
+      const ph = Math.acos(2 * Math.random() - 1)
+      const rad = 40 + Math.random() * 60
+      starVerts[i * 3] = rad * Math.sin(ph) * Math.cos(th)
+      starVerts[i * 3 + 1] = rad * Math.sin(ph) * Math.sin(th)
+      starVerts[i * 3 + 2] = rad * Math.cos(ph)
     }
-    const starGeom = new THREE.BufferGeometry()
-    starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3))
-    scene.add(
-      new THREE.Points(
-        starGeom,
-        new THREE.PointsMaterial({
-          color: 0xc8e8ff,
-          size: 0.15,
-          sizeAttenuation: true,
-          transparent: true,
-          opacity: 0.7,
-        }),
-      ),
-    )
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starVerts, 3))
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+      color: 0xc8e8ff, size: 0.15, sizeAttenuation: true, transparent: true, opacity: 0.7,
+    })))
 
-    // ── resize ────────────────────────────────────────────────
-    resizeObs = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (!entry) return
-      const w = Math.max(320, entry.contentRect.width)
-      const h = Math.max(360, entry.contentRect.height)
-      r.setSize(w, h, false)
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-    })
-    resizeObs.observe(hostRef)
-
-    // ── render loop (starts immediately — stars visible during build) ──
+    // Render loop — starts now so stars are visible
     const animate = () => {
       frameId = requestAnimationFrame(animate)
       ctrl.update()
-
-      if (composed) {
-        const t = performance.now() * 0.001
-        for (let i = 0; i < composed.blockGroups.length; i++) {
-          const { group, block } = composed.blockGroups[i]
-          group.userData._baseX = group.userData._baseX ?? group.position.x
-          group.position.x =
-            group.userData._baseX + Math.sin(t * 0.3 + i * 0.8) * 0.03
-
-          if (block.kind === 'diagram') {
-            group.quaternion.copy(camera.quaternion)
-          }
-        }
-      }
-
       r.render(scene, camera)
     }
     animate()
 
-    // ── build document ────────────────────────────────────────
+    // Resize
+    const ro = new ResizeObserver(([entry]) => {
+      if (!entry) return
+      const rw = Math.max(320, entry.contentRect.width)
+      const rh = Math.max(360, entry.contentRect.height)
+      r.setSize(rw, rh, false)
+      camera.aspect = rw / rh
+      camera.updateProjectionMatrix()
+    })
+    ro.observe(hostRef)
+    disposables.push(() => ro.disconnect())
+
+    // ── build blocks ──────────────────────────────────────────
+    const blocks = props.documentModel.blocks
+    const root = new THREE.Group()
+    let cursorY = 0
+
+    setStatus('Loading font...')
+    setProgress(5)
+
+    let font: any = null
     try {
-      setPhase('Loading font...')
-      setProgress(5)
-      const font = await loadUMLFont()
-
-      setPhase('Building blocks...')
-      setProgress(10)
-
-      composed = await composeSceneAsync(
-        props.documentModel.blocks,
-        font,
-        (built, total) => {
-          const pct = 10 + Math.round((built / total) * 85)
-          setProgress(pct)
-          setPhase(`Block ${built + 1} of ${total}`)
-        },
-      )
-      scene.add(composed.root)
-
-      setProgress(100)
-      setBuilding(false)
-
-      // Fit camera
-      const box = new THREE.Box3().setFromObject(composed.root)
-      if (!box.isEmpty()) {
-        const size = box.getSize(new THREE.Vector3())
-        const maxDim = Math.max(size.x, size.y, size.z, 5)
-        camera.position.set(0, 0, maxDim * 1.4)
-      } else {
-        camera.position.set(0, 0, 12)
-      }
-      ctrl.target.set(0, 0, 0)
-      ctrl.update()
+      font = await loadUMLFont()
     } catch (e) {
-      console.error('Blueprint build error:', e)
-      setPhase('Build failed — check console')
-      setTimeout(() => setBuilding(false), 2000)
+      console.warn('Font load failed, proceeding without 3D diagrams:', e)
     }
+
+    setProgress(10)
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]
+      setStatus(`Block ${i + 1} / ${blocks.length}`)
+      setProgress(10 + Math.round((i / blocks.length) * 85))
+
+      // Yield to let progress bar paint
+      if (i % 3 === 0) {
+        await new Promise<void>(res => requestAnimationFrame(() => res()))
+      }
+
+      let group: THREE.Group | null = null
+
+      // Try 3D UML for mermaid diagrams
+      if (
+        block.kind === 'diagram' &&
+        font &&
+        block.language?.trim().toLowerCase() === 'mermaid' &&
+        /^(graph|flowchart)\s/i.test(block.text.trim())
+      ) {
+        try {
+          const uml = buildUML3D(block.text, font)
+          group = uml.group
+          // Scale to reasonable size
+          const box = new THREE.Box3().setFromObject(group)
+          const sz = box.getSize(new THREE.Vector3())
+          const scale = 4 / Math.max(sz.x, sz.y, 1)
+          group.scale.setScalar(scale * 0.8)
+          disposables.push(uml.dispose)
+        } catch (e) {
+          console.warn('UML build failed for block', block.id, e)
+          group = null
+        }
+      }
+
+      // Fallback: canvas card for everything else
+      if (!group) {
+        group = makeCard(block)
+      }
+
+      if (group) {
+        group.position.set(0, cursorY, 0)
+        root.add(group)
+
+        const box = new THREE.Box3().setFromObject(group)
+        const size = box.getSize(new THREE.Vector3())
+        cursorY -= size.y + 0.5
+      }
+    }
+
+    // Center and add to scene
+    const rootBox = new THREE.Box3().setFromObject(root)
+    if (!rootBox.isEmpty()) {
+      const center = rootBox.getCenter(new THREE.Vector3())
+      root.position.y -= center.y
+    }
+    scene.add(root)
+
+    // Fit camera
+    const finalBox = new THREE.Box3().setFromObject(root)
+    if (!finalBox.isEmpty()) {
+      const sz = finalBox.getSize(new THREE.Vector3())
+      camera.position.set(0, 0, Math.max(sz.x, sz.y, sz.z, 8) * 1.3)
+    }
+    ctrl.target.set(0, 0, 0)
+    ctrl.update()
+
+    setProgress(100)
+    setLoading(false)
   })
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
-      <Show when={building()}>
+      <Show when={loading()}>
         <div class="blueprint-progress">
           <div class="progress-shell">
-            <div
-              class="progress-fill"
-              style={{ width: `${progress()}%` }}
-            />
+            <div class="progress-fill" style={{ width: `${progress()}%` }} />
             <div class="progress-copy">
               <span class="progress-name">{props.documentModel.title}</span>
-              <span class="progress-phase">{phase()}</span>
+              <span class="progress-phase">{status()}</span>
               <span class="progress-percent">{progress()}%</span>
             </div>
           </div>
@@ -203,4 +202,105 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       </Show>
     </div>
   )
+}
+
+// ── simple canvas card — zero dependencies ───────────────────────
+
+function makeCard(block: BlogBlock): THREE.Group {
+  const CARD_W = 900
+  const PAD = 50
+
+  const canvas = document.createElement('canvas')
+  canvas.width = CARD_W
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    // Absolute fallback — colored box
+    const geo = new THREE.BoxGeometry(4, 0.5, 0.05)
+    const mat = new THREE.MeshStandardMaterial({ color: 0x78daff })
+    const g = new THREE.Group()
+    g.add(new THREE.Mesh(geo, mat))
+    return g
+  }
+
+  const isHeading = block.kind === 'heading'
+  const isCode = block.kind === 'code' || block.kind === 'diagram' || block.kind === 'table'
+
+  // Measure text
+  const fontSize = isHeading ? 34 : isCode ? 18 : 24
+  const lineH = isHeading ? 44 : isCode ? 24 : 32
+  ctx.font = `${isHeading ? '700' : '400'} ${fontSize}px ${isCode ? 'monospace' : 'sans-serif'}`
+
+  const maxW = CARD_W - PAD * 2
+  const lines = wordWrap(ctx, block.text, maxW)
+  const textH = lines.length * lineH
+
+  // Size canvas
+  canvas.height = Math.max(80 + textH + PAD, 120)
+
+  // Redraw after resize (clears canvas)
+  // Background
+  ctx.fillStyle = 'rgba(6, 12, 24, 0.9)'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.strokeStyle = 'rgba(120, 218, 255, 0.12)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6)
+
+  // Accent
+  ctx.fillStyle = isHeading ? '#78daff' : 'rgba(120, 218, 255, 0.4)'
+  ctx.fillRect(PAD, 22, isHeading ? 140 : 80, isHeading ? 4 : 3)
+
+  // Label
+  ctx.fillStyle = 'rgba(140, 180, 210, 0.6)'
+  ctx.font = '600 14px sans-serif'
+  ctx.fillText(block.label.toUpperCase(), PAD, 50)
+
+  // Code panel bg
+  if (isCode) {
+    ctx.fillStyle = 'rgba(10, 30, 20, 0.5)'
+    ctx.fillRect(PAD - 12, 60, canvas.width - PAD * 2 + 24, textH + 20)
+  }
+
+  // Body text
+  ctx.fillStyle = isHeading ? '#eaf4ff' : isCode ? '#a8e6cf' : '#c8ddf0'
+  ctx.font = `${isHeading ? '700' : '400'} ${fontSize}px ${isCode ? 'monospace' : 'sans-serif'}`
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], PAD, 70 + i * lineH + fontSize)
+  }
+
+  // Create mesh
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  const aspect = canvas.height / canvas.width
+  const worldW = 4.2
+  const geo = new THREE.PlaneGeometry(worldW, worldW * aspect)
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    side: THREE.DoubleSide,
+  })
+  const mesh = new THREE.Mesh(geo, mat)
+
+  const group = new THREE.Group()
+  group.add(mesh)
+  return group
+}
+
+function wordWrap(ctx: CanvasRenderingContext2D, text: string, max: number): string[] {
+  const out: string[] = []
+  for (const raw of text.split('\n')) {
+    if (!raw.trim()) { out.push(''); continue }
+    let line = ''
+    for (const word of raw.split(/\s+/)) {
+      const test = line ? line + ' ' + word : word
+      if (ctx.measureText(test).width > max && line) {
+        out.push(line)
+        line = word
+      } else {
+        line = test
+      }
+    }
+    if (line) out.push(line)
+  }
+  return out.length ? out : ['']
 }
