@@ -9,6 +9,8 @@ import {
 } from '@chenglou/pretext'
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import * as THREE from 'three'
+// @ts-ignore
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
 
 import type {
   BlogBlock,
@@ -63,21 +65,222 @@ type SceneCard = {
 }
 
 function lerpCardOpacity(card: SceneCard, target: number, speed: number) {
-  if (card.isUML) {
-    const cur = (card.mesh.userData._opacity as number) ?? 1
-    const next = cur + (target - cur) * speed
-    card.mesh.userData._opacity = next
-    card.mesh.traverse((child: any) => {
-      if (child.material && 'opacity' in child.material) {
-        const mats = Array.isArray(child.material) ? child.material : [child.material]
-        for (const m of mats) {
+  const cur = (card.mesh.userData._opacity as number) ?? 1
+  const next = cur + (target - cur) * speed
+  card.mesh.userData._opacity = next
+  card.mesh.traverse((child: any) => {
+    if (child.material) {
+      const mats = Array.isArray(child.material) ? child.material : [child.material]
+      for (const m of mats) {
+        if ('opacity' in m) {
+          m.transparent = true
           m.opacity = next * (m.userData?._baseOpacity ?? 1)
         }
       }
+    }
+  })
+}
+
+function storeBaseOpacities(obj: THREE.Object3D) {
+  obj.traverse((child: any) => {
+    if (child.material) {
+      const mats = Array.isArray(child.material) ? child.material : [child.material]
+      for (const m of mats) {
+        if (!m.userData) m.userData = {}
+        m.userData._baseOpacity = m.opacity ?? 1
+        m.transparent = true
+      }
+    }
+  })
+}
+
+// ── 3D text builders for Orbit ───────────────────────────────────
+
+const orbitGeoCache = new Map<string, THREE.BufferGeometry | null>()
+
+function orbitCharGeo(char: string, font: any, size: number): THREE.BufferGeometry | null {
+  const key = `${char}|${size}`
+  if (orbitGeoCache.has(key)) return orbitGeoCache.get(key)!
+  try {
+    const g = new TextGeometry(char, {
+      font, size, depth: 0.03, curveSegments: 3, bevelEnabled: false,
     })
-  } else {
-    const mat = (card.mesh as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>).material
-    mat.opacity += (target - mat.opacity) * speed
+    g.computeBoundingBox()
+    g.center()
+    orbitGeoCache.set(key, g)
+    return g
+  } catch {
+    orbitGeoCache.set(key, null)
+    return null
+  }
+}
+
+function orbitLine(
+  text: string, font: any, size: number, spacing: number, color: number,
+): THREE.Group {
+  const g = new THREE.Group()
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === ' ') continue
+    const geo = orbitCharGeo(text[i], font, size)
+    if (!geo) continue
+    const mat = new THREE.MeshStandardMaterial({
+      color, metalness: 0.3, roughness: 0.6,
+      emissive: color, emissiveIntensity: 0.12,
+    })
+    const mesh = new THREE.Mesh(geo, mat)
+    mesh.position.x = i * spacing
+    g.add(mesh)
+  }
+  return g
+}
+
+function orbitWrap(text: string, max: number): string[] {
+  const out: string[] = []
+  for (const raw of text.split('\n')) {
+    if (!raw.trim()) { out.push(''); continue }
+    let line = ''
+    for (const word of raw.split(/\s+/)) {
+      if (!word) continue
+      const test = line ? line + ' ' + word : word
+      if (test.length > max && line) { out.push(line); line = word }
+      else line = test
+    }
+    if (line) out.push(line)
+  }
+  return out.length ? out : ['']
+}
+
+function orbitAccentBar(width: number, color = 0x78daff): THREE.Mesh {
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(width, 0.03, 0.03),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25 }),
+  )
+}
+
+function orbitWireBox(w: number, h: number, d: number, color: number): THREE.Group {
+  const g = new THREE.Group()
+  const box = new THREE.BoxGeometry(w, h, d)
+  g.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(box),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.4 }),
+  ))
+  g.add(new THREE.Mesh(box, new THREE.MeshStandardMaterial({
+    color, transparent: true, opacity: 0.04, side: THREE.DoubleSide,
+  })))
+  return g
+}
+
+function buildOrbit3DBlock(block: BlogBlock, font: any, palette: any): THREE.Group {
+  try {
+    switch (block.kind) {
+      case 'heading': {
+        const g = new THREE.Group()
+        const lines = orbitWrap(block.text, 30)
+        const label = orbitLine(block.label.toUpperCase(), font, 0.055, 0.045, parseInt(palette.textSoft.replace('#', ''), 16))
+        label.position.y = 0.25
+        g.add(label)
+        const bar = orbitAccentBar(lines[0].length * 0.18 * 0.5, parseInt(palette.accent.replace('#', ''), 16))
+        bar.position.y = 0.38
+        g.add(bar)
+        for (let i = 0; i < lines.length; i++) {
+          const line = orbitLine(lines[i], font, 0.24, 0.18, parseInt(palette.text.replace('#', ''), 16))
+          line.position.y = -i * 0.38
+          line.position.z = i * 0.05
+          g.add(line)
+        }
+        return g
+      }
+      case 'code':
+      case 'diagram':
+      case 'table':
+      case 'formula': {
+        const g = new THREE.Group()
+        const rawLines = block.text.split('\n')
+        const lines = rawLines.map(l => l.length > 65 ? l.slice(0, 65) + '...' : l)
+        const lang = (block.language || block.kind).toUpperCase()
+        const label = orbitLine(lang, font, 0.045, 0.038, 0xa8e6cf)
+        label.position.y = 0.16
+        g.add(label)
+        const codeG = new THREE.Group()
+        for (let i = 0; i < lines.length; i++) {
+          if (!lines[i]) continue
+          const line = orbitLine(lines[i], font, 0.10, 0.078, 0xa8e6cf)
+          line.position.y = -i * 0.18
+          line.position.z = i * 0.05
+          codeG.add(line)
+        }
+        g.add(codeG)
+        const maxLen = Math.max(...lines.map(l => l.length), 1)
+        const bw = maxLen * 0.078 + 0.3
+        const bh = lines.length * 0.18 + 0.2
+        const bd = lines.length * 0.05 + 0.06
+        const frame = orbitWireBox(bw, bh, bd, 0x2a5a4a)
+        frame.position.set(bw / 2 - 0.15, -(lines.length * 0.18) / 2 + 0.05, (lines.length * 0.05) / 2)
+        g.add(frame)
+        return g
+      }
+      case 'quote': {
+        const g = new THREE.Group()
+        const lines = orbitWrap(block.text, 50)
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.025, lines.length * 0.24 + 0.15, 0.03),
+          new THREE.MeshStandardMaterial({ color: 0xf0c674, emissive: 0xf0c674, emissiveIntensity: 0.2 }),
+        )
+        bar.position.set(-0.12, -(lines.length * 0.24) / 2, 0)
+        g.add(bar)
+        for (let i = 0; i < lines.length; i++) {
+          if (!lines[i].trim()) continue
+          const line = orbitLine(lines[i], font, 0.13, 0.10, 0xf0c674)
+          line.position.set(0.08, -i * 0.24, i * 0.05)
+          g.add(line)
+        }
+        return g
+      }
+      case 'list': {
+        const g = new THREE.Group()
+        const items = block.items ?? block.text.split('\n')
+        const label = orbitLine(block.label.toUpperCase(), font, 0.045, 0.038, parseInt(palette.textSoft.replace('#', ''), 16))
+        label.position.y = 0.14
+        g.add(label)
+        for (let i = 0; i < items.length; i++) {
+          const text = items[i].replace(/^[-*•]\s*/, '')
+          if (!text.trim()) continue
+          const bullet = new THREE.Mesh(
+            new THREE.SphereGeometry(0.022, 6, 4),
+            new THREE.MeshStandardMaterial({ color: 0x78daff, emissive: 0x78daff, emissiveIntensity: 0.3 }),
+          )
+          bullet.position.set(-0.08, -i * 0.26, i * 0.05)
+          g.add(bullet)
+          const line = orbitLine(text, font, 0.13, 0.10, parseInt(palette.text.replace('#', ''), 16))
+          line.position.set(0.04, -i * 0.26, i * 0.05)
+          g.add(line)
+        }
+        return g
+      }
+      default: {
+        const g = new THREE.Group()
+        const lines = orbitWrap(block.text, 55)
+        const label = orbitLine(block.label.toUpperCase(), font, 0.045, 0.038, parseInt(palette.textSoft.replace('#', ''), 16))
+        label.position.y = 0.14
+        g.add(label)
+        for (let i = 0; i < lines.length; i++) {
+          if (!lines[i].trim()) continue
+          const line = orbitLine(lines[i], font, 0.13, 0.098, parseInt(palette.text.replace('#', ''), 16))
+          line.position.y = -i * 0.24
+          line.position.z = i * 0.05
+          g.add(line)
+        }
+        return g
+      }
+    }
+  } catch (e) {
+    console.warn('Orbit 3D block failed:', block.id, e)
+    const g = new THREE.Group()
+    g.add(new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.05, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xff4444 }),
+    ))
+    return g
   }
 }
 
@@ -581,17 +784,34 @@ export default function MarkdownScene(props: {
       fillLight.intensity = 20
       driftSlides = []
 
+      // Build all blocks as 3D text meshes (no canvas cards)
+      const font = getUMLFont()
+      const spacePalette = palettes[currentEnvironment!]
       cards = props.documentModel.blocks.map((block, index) => {
-        if (isMermaidBlock(block)) {
+        let group: THREE.Group
+
+        if (isMermaidBlock(block) && font) {
           const umlCard = createMermaidCard(block, index)
           if (umlCard) return umlCard
         }
-        return createContentCard(
-          block,
-          index,
-          currentEnvironment!,
-          renderer.capabilities.getMaxAnisotropy(),
-        )
+
+        if (font) {
+          group = buildOrbit3DBlock(block, font, spacePalette)
+        } else {
+          // Font not loaded yet — fallback to canvas card
+          return createContentCard(block, index, currentEnvironment!, renderer.capabilities.getMaxAnisotropy())
+        }
+
+        group.userData = { index, kind: block.kind }
+        storeBaseOpacities(group)
+
+        return {
+          mesh: group,
+          basePosition: new THREE.Vector3(),
+          baseRotation: new THREE.Euler(),
+          baseScale: new THREE.Vector3(1, 1, 1),
+          isUML: true, // all 3D groups use the traversal opacity path
+        }
       })
 
       arrangeSpace(cards, stage)
@@ -642,12 +862,8 @@ export default function MarkdownScene(props: {
               card.basePosition.x + Math.cos(seconds * 0.2 + index) * drift
             card.mesh.position.y =
               card.basePosition.y + Math.sin(seconds * 0.35 + index * 0.6) * drift
-            if (card.isUML) {
-              card.mesh.quaternion.copy(camera.quaternion)
-            } else {
-              card.mesh.rotation.y = card.baseRotation.y
-              card.mesh.rotation.x = card.baseRotation.x
-            }
+            // Billboard all 3D groups toward camera
+            card.mesh.quaternion.copy(camera.quaternion)
           }
         } else {
           // Unfocused orbit: free-floating constellation
@@ -665,14 +881,11 @@ export default function MarkdownScene(props: {
               card.basePosition.x + Math.cos(seconds * 0.34 + index) * 0.12
             card.mesh.position.y =
               card.basePosition.y + Math.sin(seconds * 0.7 + index * 0.6) * 0.2
-            if (card.isUML) {
-              card.mesh.quaternion.copy(camera.quaternion)
-            } else {
-              card.mesh.rotation.y =
-                card.baseRotation.y + Math.sin(seconds * 0.5 + index * 0.4) * 0.06
-              card.mesh.rotation.x =
-                card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
-            }
+            // Gentle rotation on all 3D groups
+            card.mesh.rotation.y =
+              card.baseRotation.y + Math.sin(seconds * 0.5 + index * 0.4) * 0.06
+            card.mesh.rotation.x =
+              card.baseRotation.x + Math.cos(seconds * 0.55 + index * 0.2) * 0.035
           }
         }
       } else if (currentEnvironment === 'drift') {
