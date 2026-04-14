@@ -99,11 +99,15 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       if (composed) {
         const t = performance.now() * 0.001
         for (let i = 0; i < composed.blockGroups.length; i++) {
-          const { group } = composed.blockGroups[i]
+          const { group, block } = composed.blockGroups[i]
           group.userData._baseX = group.userData._baseX ?? group.position.x
           group.position.x =
-            group.userData._baseX + Math.sin(t * 0.3 + i * 0.8) * 0.04
-          group.quaternion.copy(camera.quaternion)
+            group.userData._baseX + Math.sin(t * 0.3 + i * 0.8) * 0.03
+
+          // Billboard only 3D diagram groups, not flat cards
+          if (block.kind === 'diagram') {
+            group.quaternion.copy(camera.quaternion)
+          }
         }
       }
 
