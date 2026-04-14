@@ -650,3 +650,14 @@ code {
   flex: 1;
   overflow: hidden;
 }
+
+/* ── Blueprint build progress ──────────────────────────────────── */
+
+.blueprint-progress {
+  position: absolute;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, 80vw);
+  z-index: 10;
+}

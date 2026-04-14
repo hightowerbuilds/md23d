@@ -1,7 +1,7 @@
 export { buildHeading } from './headingBuilder'
 export { buildParagraph } from './paragraphBuilder'
 export { buildCode } from './codeBuilder'
-export { composeScene } from './sceneComposer'
+export { composeScene, composeSceneAsync } from './sceneComposer'
 export type { ComposedScene } from './sceneComposer'
 export type { Block3DResult } from './types'
 export {

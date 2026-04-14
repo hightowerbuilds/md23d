@@ -67,6 +67,67 @@ export interface ComposedScene {
   dispose: () => void
 }
 
+function yieldToMain(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()))
+}
+
+export async function composeSceneAsync(
+  blocks: BlogBlock[],
+  font: Font,
+  onProgress?: (built: number, total: number) => void,
+): Promise<ComposedScene> {
+  const root = new THREE.Group()
+  root.name = 'md3d-document'
+
+  const blockGroups: ComposedScene['blockGroups'] = []
+  let cursorY = 0
+  let cursorZ = 0
+  let lastSection = -1
+  const total = blocks.length
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]
+    const result = buildBlock(block, font)
+
+    // Yield every block so the browser can paint the progress bar
+    if (i % 2 === 0) {
+      onProgress?.(i, total)
+      await yieldToMain()
+    }
+
+    if (!result) continue
+
+    if (block.sectionIndex !== undefined && block.sectionIndex !== lastSection) {
+      if (lastSection >= 0) cursorY -= SECTION_GAP_Y
+      lastSection = block.sectionIndex
+    }
+
+    const { group, boundingSize } = result
+    group.position.set(0, cursorY, cursorZ)
+    root.add(group)
+    blockGroups.push({ block, group, result })
+
+    cursorY -= boundingSize.y + BLOCK_GAP_Y
+    cursorZ += Z_DRIFT_PER_BLOCK
+  }
+
+  onProgress?.(total, total)
+
+  const box = new THREE.Box3().setFromObject(root)
+  const center = box.getCenter(new THREE.Vector3())
+  root.position.y -= center.y
+  root.position.z -= center.z
+
+  return {
+    root,
+    blockGroups,
+    dispose() {
+      for (const { result } of blockGroups) result.dispose()
+      root.clear()
+    },
+  }
+}
+
 export function composeScene(
   blocks: BlogBlock[],
   font: Font,

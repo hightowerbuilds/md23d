@@ -1,9 +1,9 @@
-import { onMount, onCleanup } from 'solid-js'
+import { onMount, onCleanup, createSignal, Show } from 'solid-js'
 import * as THREE from 'three'
 // @ts-ignore — no declaration file for three addons
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { loadUMLFont } from '../lib/uml'
-import { composeScene, type ComposedScene } from '../lib/md3d'
+import { composeSceneAsync, type ComposedScene } from '../lib/md3d'
 import type { BlogDocument } from '../lib/blog/types'
 
 interface BlueprintSceneProps {
@@ -16,6 +16,10 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
   let controls: OrbitControls | undefined
   let composed: ComposedScene | null = null
   let frameId = 0
+
+  const [progress, setProgress] = createSignal(0)
+  const [phase, setPhase] = createSignal('Loading font...')
+  const [building, setBuilding] = createSignal(true)
 
   onMount(async () => {
     if (!hostRef) return
@@ -87,24 +91,7 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       ),
     )
 
-    // ── build document ────────────────────────────────────────
-    try {
-      const font = await loadUMLFont()
-      composed = composeScene(props.documentModel.blocks, font)
-      scene.add(composed.root)
-
-      // fit camera
-      const box = new THREE.Box3().setFromObject(composed.root)
-      const size = box.getSize(new THREE.Vector3())
-      const maxDim = Math.max(size.x, size.y, size.z)
-      camera.position.set(0, 0, maxDim * 1.4)
-      ctrl.target.set(0, 0, 0)
-      ctrl.update()
-    } catch (e) {
-      console.error('Blueprint scene font load failed:', e)
-    }
-
-    // ── animate ───────────────────────────────────────────────
+    // Start the render loop immediately so the stars are visible during build
     const animate = () => {
       frameId = requestAnimationFrame(animate)
       ctrl.update()
@@ -116,7 +103,6 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
           group.userData._baseX = group.userData._baseX ?? group.position.x
           group.position.x =
             group.userData._baseX + Math.sin(t * 0.3 + i * 0.8) * 0.04
-          // billboard — face camera
           group.quaternion.copy(camera.quaternion)
         }
       }
@@ -124,6 +110,44 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       r.render(scene, camera)
     }
     animate()
+
+    // ── build document (async with progress) ─────────────────
+    try {
+      setPhase('Loading font...')
+      setProgress(5)
+      const font = await loadUMLFont()
+
+      setPhase('Building 3D blocks...')
+      setProgress(10)
+
+      const totalBlocks = props.documentModel.blocks.length
+      composed = await composeSceneAsync(
+        props.documentModel.blocks,
+        font,
+        (built, total) => {
+          const pct = 10 + Math.round((built / total) * 85)
+          setProgress(pct)
+          setPhase(`Building block ${built + 1} of ${total}...`)
+        },
+      )
+      scene.add(composed.root)
+
+      setProgress(100)
+      setPhase('Done')
+      setBuilding(false)
+
+      // fit camera
+      const box = new THREE.Box3().setFromObject(composed.root)
+      const size = box.getSize(new THREE.Vector3())
+      const maxDim = Math.max(size.x, size.y, size.z)
+      camera.position.set(0, 0, maxDim * 1.4)
+      ctrl.target.set(0, 0, 0)
+      ctrl.update()
+    } catch (e) {
+      console.error('Blueprint scene build failed:', e)
+      setPhase('Build failed')
+      setBuilding(false)
+    }
 
     // ── resize ────────────────────────────────────────────────
     const resizeObs = new ResizeObserver((entries) => {
@@ -155,5 +179,24 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
     }
   })
 
-  return <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div ref={hostRef} style={{ width: '100%', height: '100%' }} />
+      <Show when={building()}>
+        <div class="blueprint-progress">
+          <div class="progress-shell">
+            <div
+              class="progress-fill"
+              style={{ width: `${progress()}%` }}
+            />
+            <div class="progress-copy">
+              <span class="progress-name">{props.documentModel.title}</span>
+              <span class="progress-phase">{phase()}</span>
+              <span class="progress-percent">{progress()}%</span>
+            </div>
+          </div>
+        </div>
+      </Show>
+    </div>
+  )
 }
