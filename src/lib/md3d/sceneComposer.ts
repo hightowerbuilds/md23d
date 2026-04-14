@@ -15,32 +15,36 @@ const DIAGRAM_SCALE = 0.75
 
 // ── canvas card builder (readable text on a plane) ───────────────
 
-function buildCanvasCard(block: BlogBlock): Block3DResult {
-  const canvas = document.createElement('canvas')
-  canvas.width = CARD_PIXEL_WIDTH
-  const ctx = canvas.getContext('2d')!
+function buildCanvasCard(block: BlogBlock): Block3DResult | null {
+  let canvas: HTMLCanvasElement
+  try {
+    canvas = document.createElement('canvas')
+  } catch {
+    return null
+  }
 
-  // Measure text to determine canvas height
-  ctx.font = '500 26px "Outfit", sans-serif'
-  const bodyLines = wrapCanvasText(ctx, block.text, CARD_PIXEL_WIDTH - CARD_PADDING * 2)
+  canvas.width = CARD_PIXEL_WIDTH
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
 
   const isHeading = block.kind === 'heading'
-  const isCode = block.kind === 'code' || block.kind === 'diagram' || block.kind === 'table'
+  const isCode =
+    block.kind === 'code' || block.kind === 'diagram' || block.kind === 'table'
 
-  const titleSize = isHeading ? 40 : 26
   const bodySize = isCode ? 20 : 26
   const bodyFont = isCode
-    ? `400 ${bodySize}px "JetBrains Mono", monospace`
-    : `400 ${bodySize}px "Outfit", sans-serif`
+    ? `400 ${bodySize}px monospace`
+    : `400 ${bodySize}px sans-serif`
   const lineHeight = isCode ? 26 : 34
 
-  // Re-measure with correct font
+  // Measure with correct font
   ctx.font = bodyFont
   const lines = wrapCanvasText(ctx, block.text, CARD_PIXEL_WIDTH - CARD_PADDING * 2)
-  const bodyHeight = lines.length * lineHeight
+  const bodyHeight = Math.max(lines.length * lineHeight, lineHeight)
 
   const headerHeight = 80
-  canvas.height = headerHeight + bodyHeight + CARD_PADDING + 20
+  canvas.height = Math.max(headerHeight + bodyHeight + CARD_PADDING + 20, 140)
 
   // Background
   ctx.fillStyle = 'rgba(8, 16, 32, 0.85)'
@@ -52,22 +56,16 @@ function buildCanvasCard(block: BlogBlock): Block3DResult {
   ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8)
 
   // Accent bar
-  ctx.fillStyle = '#78daff'
-  ctx.fillRect(CARD_PADDING, 30, 120, 4)
-  ctx.fillStyle = 'rgba(91, 141, 239, 0.25)'
-  ctx.fillRect(CARD_PADDING + 130, 30, 80, 4)
+  ctx.fillStyle = isHeading ? '#78daff' : 'rgba(120, 218, 255, 0.5)'
+  ctx.fillRect(CARD_PADDING, 30, isHeading ? 160 : 100, isHeading ? 5 : 3)
 
   // Label
   ctx.fillStyle = 'rgba(138, 175, 200, 0.7)'
-  ctx.font = '600 16px "Outfit", sans-serif'
+  ctx.font = '600 16px sans-serif'
   ctx.fillText(block.label.toUpperCase(), CARD_PADDING, 62)
 
-  // Body text
-  ctx.fillStyle = isCode ? '#a8e6cf' : '#d0e4f5'
-  ctx.font = bodyFont
-
+  // Code panel background
   if (isCode) {
-    // Code panel background
     ctx.fillStyle = 'rgba(10, 31, 22, 0.6)'
     ctx.fillRect(
       CARD_PADDING - 16,
@@ -75,18 +73,30 @@ function buildCanvasCard(block: BlogBlock): Block3DResult {
       canvas.width - CARD_PADDING * 2 + 32,
       bodyHeight + 24,
     )
-    ctx.fillStyle = '#a8e6cf'
   }
 
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], CARD_PADDING, headerHeight + i * lineHeight + bodySize)
+  // Body text
+  ctx.fillStyle = isCode ? '#a8e6cf' : isHeading ? '#eaf4ff' : '#d0e4f5'
+  ctx.font = isHeading ? `700 ${36}px sans-serif` : bodyFont
+
+  if (isHeading) {
+    // Re-wrap for heading size
+    const headingLines = wrapCanvasText(ctx, block.text, CARD_PIXEL_WIDTH - CARD_PADDING * 2)
+    for (let i = 0; i < headingLines.length; i++) {
+      ctx.fillText(headingLines[i], CARD_PADDING, headerHeight + i * 44 + 36)
+    }
+  } else {
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], CARD_PADDING, headerHeight + i * lineHeight + bodySize)
+    }
   }
 
   // Create 3D mesh
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   const aspect = canvas.height / canvas.width
-  const geometry = new THREE.PlaneGeometry(CARD_WORLD_WIDTH, CARD_WORLD_WIDTH * aspect)
+  const planeH = CARD_WORLD_WIDTH * aspect
+  const geometry = new THREE.PlaneGeometry(CARD_WORLD_WIDTH, planeH)
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
@@ -98,11 +108,9 @@ function buildCanvasCard(block: BlogBlock): Block3DResult {
   group.name = `card-${block.id}`
   group.add(mesh)
 
-  const size = new THREE.Vector3(CARD_WORLD_WIDTH, CARD_WORLD_WIDTH * aspect, 0.01)
-
   return {
     group,
-    boundingSize: size,
+    boundingSize: new THREE.Vector3(CARD_WORLD_WIDTH, planeH, 0.01),
     dispose() {
       geometry.dispose()
       material.dispose()
@@ -111,7 +119,11 @@ function buildCanvasCard(block: BlogBlock): Block3DResult {
   }
 }
 
-function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+function wrapCanvasText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string[] {
   const rawLines = text.split('\n')
   const result: string[] = []
 
@@ -124,7 +136,8 @@ function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: n
     let line = ''
     for (const word of words) {
       const test = line ? line + ' ' + word : word
-      if (ctx.measureText(test).width > maxWidth && line) {
+      const w = ctx.measureText(test).width
+      if (w > maxWidth && line) {
         result.push(line)
         line = word
       } else {
@@ -133,7 +146,8 @@ function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: n
     }
     if (line) result.push(line)
   }
-  return result
+
+  return result.length > 0 ? result : ['']
 }
 
 // ── Mermaid diagram builder (true 3D) ────────────────────────────
@@ -151,32 +165,38 @@ function buildDiagram3D(block: BlogBlock, font: Font): Block3DResult | null {
     const box = new THREE.Box3().setFromObject(result.group)
     const size = box.getSize(new THREE.Vector3())
 
-    // Scale to fit near card width
+    if (size.x === 0 && size.y === 0) return null
+
     const scale = (CARD_WORLD_WIDTH / Math.max(size.x, 1)) * DIAGRAM_SCALE
     result.group.scale.setScalar(scale)
 
-    const scaledSize = size.multiplyScalar(scale)
     return {
       group: result.group,
-      boundingSize: scaledSize,
+      boundingSize: size.multiplyScalar(scale),
       dispose: result.dispose,
     }
-  } catch {
+  } catch (e) {
+    console.warn('Diagram 3D build failed for block', block.id, e)
     return null
   }
 }
 
 // ── block dispatch ───────────────────────────────────────────────
 
-function buildBlock(block: BlogBlock, font: Font): Block3DResult {
-  // Mermaid diagrams → 3D mesh objects
-  if (block.kind === 'diagram') {
-    const diagram = buildDiagram3D(block, font)
-    if (diagram) return diagram
-  }
+function buildBlock(block: BlogBlock, font: Font): Block3DResult | null {
+  try {
+    // Mermaid diagrams → 3D mesh objects
+    if (block.kind === 'diagram') {
+      const diagram = buildDiagram3D(block, font)
+      if (diagram) return diagram
+    }
 
-  // Everything else → readable canvas card
-  return buildCanvasCard(block)
+    // Everything else → readable canvas card
+    return buildCanvasCard(block)
+  } catch (e) {
+    console.warn('Block build failed:', block.id, block.kind, e)
+    return null
+  }
 }
 
 // ── compose full document ────────────────────────────────────────
@@ -208,13 +228,14 @@ export async function composeSceneAsync(
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]
 
-    // Yield every few blocks so the progress bar can paint
+    // Yield every few blocks so the progress bar paints
     if (i % 3 === 0) {
       onProgress?.(i, total)
       await yieldToMain()
     }
 
     const result = buildBlock(block, font)
+    if (!result) continue
 
     if (block.sectionIndex !== undefined && block.sectionIndex !== lastSection) {
       if (lastSection >= 0) cursorY -= SECTION_GAP_Y
@@ -232,11 +253,15 @@ export async function composeSceneAsync(
 
   onProgress?.(total, total)
 
-  // Center vertically
-  const box = new THREE.Box3().setFromObject(root)
-  const center = box.getCenter(new THREE.Vector3())
-  root.position.y -= center.y
-  root.position.z -= center.z
+  // Center vertically — guard against empty scene
+  if (blockGroups.length > 0) {
+    const box = new THREE.Box3().setFromObject(root)
+    if (!box.isEmpty()) {
+      const center = box.getCenter(new THREE.Vector3())
+      root.position.y -= center.y
+      root.position.z -= center.z
+    }
+  }
 
   return {
     root,
@@ -248,7 +273,7 @@ export async function composeSceneAsync(
   }
 }
 
-// Keep sync version for /uml route
+// Sync version for /uml route
 export function composeScene(
   blocks: BlogBlock[],
   font: Font,
@@ -263,6 +288,7 @@ export function composeScene(
 
   for (const block of blocks) {
     const result = buildBlock(block, font)
+    if (!result) continue
 
     if (block.sectionIndex !== undefined && block.sectionIndex !== lastSection) {
       if (lastSection >= 0) cursorY -= SECTION_GAP_Y
@@ -278,10 +304,14 @@ export function composeScene(
     cursorZ += 0.08
   }
 
-  const box = new THREE.Box3().setFromObject(root)
-  const center = box.getCenter(new THREE.Vector3())
-  root.position.y -= center.y
-  root.position.z -= center.z
+  if (blockGroups.length > 0) {
+    const box = new THREE.Box3().setFromObject(root)
+    if (!box.isEmpty()) {
+      const center = box.getCenter(new THREE.Vector3())
+      root.position.y -= center.y
+      root.position.z -= center.z
+    }
+  }
 
   return {
     root,

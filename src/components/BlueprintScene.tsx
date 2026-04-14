@@ -121,36 +121,39 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       setProgress(5)
       const font = await loadUMLFont()
 
-      setPhase('Building 3D blocks...')
+      setPhase('Building blocks...')
       setProgress(10)
 
-      const totalBlocks = props.documentModel.blocks.length
       composed = await composeSceneAsync(
         props.documentModel.blocks,
         font,
         (built, total) => {
           const pct = 10 + Math.round((built / total) * 85)
           setProgress(pct)
-          setPhase(`Building block ${built + 1} of ${total}...`)
+          setPhase(`Block ${built + 1} of ${total}`)
         },
       )
       scene.add(composed.root)
 
       setProgress(100)
-      setPhase('Done')
       setBuilding(false)
 
-      // fit camera
+      // Fit camera — guard against empty scenes
       const box = new THREE.Box3().setFromObject(composed.root)
-      const size = box.getSize(new THREE.Vector3())
-      const maxDim = Math.max(size.x, size.y, size.z)
-      camera.position.set(0, 0, maxDim * 1.4)
+      if (!box.isEmpty()) {
+        const size = box.getSize(new THREE.Vector3())
+        const maxDim = Math.max(size.x, size.y, size.z, 5)
+        camera.position.set(0, 0, maxDim * 1.4)
+      } else {
+        camera.position.set(0, 0, 12)
+      }
       ctrl.target.set(0, 0, 0)
       ctrl.update()
     } catch (e) {
-      console.error('Blueprint scene build failed:', e)
-      setPhase('Build failed')
-      setBuilding(false)
+      console.error('Blueprint build error:', e)
+      setPhase('Build failed — check console')
+      // Still dismiss after a moment so user isn't stuck
+      setTimeout(() => setBuilding(false), 2000)
     }
 
     // ── resize ────────────────────────────────────────────────
