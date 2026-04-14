@@ -12,14 +12,30 @@ interface BlueprintSceneProps {
 
 export default function BlueprintScene(props: BlueprintSceneProps) {
   let hostRef: HTMLDivElement | undefined
+
+  // Mutable refs for cleanup — set during onMount, cleaned in onCleanup
   let renderer: THREE.WebGLRenderer | undefined
   let controls: OrbitControls | undefined
   let composed: ComposedScene | null = null
+  let resizeObs: ResizeObserver | undefined
   let frameId = 0
 
   const [progress, setProgress] = createSignal(0)
   const [phase, setPhase] = createSignal('Loading font...')
   const [building, setBuilding] = createSignal(true)
+
+  // All cleanup in one place — at the component body level, not inside async
+  onCleanup(() => {
+    if (frameId) cancelAnimationFrame(frameId)
+    resizeObs?.disconnect()
+    composed?.dispose()
+    composed = null
+    controls?.dispose()
+    if (renderer) {
+      renderer.dispose()
+      renderer.domElement.remove()
+    }
+  })
 
   onMount(async () => {
     if (!hostRef) return
@@ -65,7 +81,7 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
     fill.position.set(-5, 3, 4)
     scene.add(fill)
 
-    // ── star field (fixed backdrop) ───────────────────────────
+    // ── star field ────────────────────────────────────────────
     const starCount = 1200
     const starPos = new Float32Array(starCount * 3)
     for (let i = 0; i < starCount; i++) {
@@ -91,7 +107,19 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       ),
     )
 
-    // Start the render loop immediately so the stars are visible during build
+    // ── resize ────────────────────────────────────────────────
+    resizeObs = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const w = Math.max(320, entry.contentRect.width)
+      const h = Math.max(360, entry.contentRect.height)
+      r.setSize(w, h, false)
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+    })
+    resizeObs.observe(hostRef)
+
+    // ── render loop (starts immediately — stars visible during build) ──
     const animate = () => {
       frameId = requestAnimationFrame(animate)
       ctrl.update()
@@ -104,7 +132,6 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
           group.position.x =
             group.userData._baseX + Math.sin(t * 0.3 + i * 0.8) * 0.03
 
-          // Billboard only 3D diagram groups, not flat cards
           if (block.kind === 'diagram') {
             group.quaternion.copy(camera.quaternion)
           }
@@ -115,7 +142,7 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
     }
     animate()
 
-    // ── build document (async with progress) ─────────────────
+    // ── build document ────────────────────────────────────────
     try {
       setPhase('Loading font...')
       setProgress(5)
@@ -138,7 +165,7 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
       setProgress(100)
       setBuilding(false)
 
-      // Fit camera — guard against empty scenes
+      // Fit camera
       const box = new THREE.Box3().setFromObject(composed.root)
       if (!box.isEmpty()) {
         const size = box.getSize(new THREE.Vector3())
@@ -152,37 +179,7 @@ export default function BlueprintScene(props: BlueprintSceneProps) {
     } catch (e) {
       console.error('Blueprint build error:', e)
       setPhase('Build failed — check console')
-      // Still dismiss after a moment so user isn't stuck
       setTimeout(() => setBuilding(false), 2000)
-    }
-
-    // ── resize ────────────────────────────────────────────────
-    const resizeObs = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (!entry) return
-      const w = Math.max(320, entry.contentRect.width)
-      const h = Math.max(360, entry.contentRect.height)
-      r.setSize(w, h, false)
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-    })
-    resizeObs.observe(hostRef)
-
-    onCleanup(() => {
-      resizeObs.disconnect()
-    })
-  })
-
-  onCleanup(() => {
-    if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(frameId)
-    if (composed) {
-      composed.dispose()
-      composed = null
-    }
-    if (controls) controls.dispose()
-    if (renderer) {
-      renderer.dispose()
-      renderer.domElement.remove()
     }
   })
 
